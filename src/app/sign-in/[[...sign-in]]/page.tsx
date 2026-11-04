@@ -1,46 +1,89 @@
 import { SignIn } from "@clerk/nextjs";
 import Link from "next/link";
-import { Sparkles, ArrowLeft } from "lucide-react";
+import { ArrowLeft, Sparkles, HeartHandshake } from "lucide-react";
+import { CinematicVideoBackground } from "@/components/auth/cinematic-video-background";
 
 export default function SignInPage() {
   return (
-    <main className="min-h-screen flex flex-col justify-center items-center bg-[#F7F5EF] p-4 sm:p-6 lg:p-8">
-      {/* Return Home Button */}
-      <div className="w-full max-w-5xl mb-6 flex justify-start">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#19372D] hover:text-[#244B3C] px-3.5 py-1.5 rounded-full bg-white border border-[#E7E3D9] transition-colors shadow-2xs"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Back to LendLoop</span>
-        </Link>
-      </div>
+    <main className="min-h-screen w-full flex flex-col lg:flex-row bg-[#F7F5EF] text-[#292D2A] relative">
+      {/* LEFT SECTION: 60% Width Cinematic Video on Desktop, Full-screen background on Mobile */}
+      <section className="relative w-full lg:w-[60%] min-h-[420px] lg:min-h-screen flex flex-col justify-between p-6 sm:p-10 lg:p-16 z-0 overflow-hidden">
+        {/* Cinematic Video Background Layer */}
+        <CinematicVideoBackground />
 
-      <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-12 rounded-3xl overflow-hidden border border-[#E7E3D9] bg-white shadow-xl">
-        {/* Brand Left Editorial Column */}
-        <div className="lg:col-span-5 bg-[#19372D] text-[#F7F5EF] p-8 sm:p-12 flex flex-col justify-between relative overflow-hidden">
-          <div className="space-y-6 relative z-10">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#244B3C] border border-[#9CAF91]/40 text-[#DCE7D9] text-xs font-semibold">
-              <Sparkles className="w-3.5 h-3.5 text-[#F2D98D]" />
-              <span>Neighbourhood Access</span>
+        {/* Top Header / Brand Mark */}
+        <div className="relative z-10 flex items-center justify-between">
+          <Link
+            href="/"
+            className="flex items-center gap-2.5 group focus:outline-none focus-visible:ring-2 focus-visible:ring-[#DCE7D9] rounded-lg"
+          >
+            <div className="w-10 h-10 rounded-2xl bg-white/15 backdrop-blur-md border border-white/25 flex items-center justify-center text-[#F7F5EF] shadow-sm group-hover:bg-white/25 transition-colors">
+              <svg
+                className="w-5 h-5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M7 11V7a5 5 0 0 1 10 0v1" />
+                <path d="M17 13v4a5 5 0 0 1-10 0v-1" />
+                <polyline points="15 6 17 8 19 6" />
+                <polyline points="9 18 7 16 5 18" />
+              </svg>
             </div>
-            <h1 className="font-editorial text-3xl sm:text-4xl text-white font-normal leading-tight">
-              Welcome back to <br />
-              <span className="text-[#9CAF91] italic">LendLoop.</span>
-            </h1>
-            <p className="text-sm text-[#DCE7D9]/80 font-sans leading-relaxed">
-              Sign in to manage your tool listings, review incoming borrowing
-              requests, and coordinate with nearby community members.
+            <span className="font-editorial text-2xl font-normal tracking-tight text-white">
+              LendLoop
+            </span>
+          </Link>
+
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-white/90 hover:text-white px-3.5 py-1.5 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 transition-all shadow-2xs"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Back to home</span>
+          </Link>
+        </div>
+
+        {/* Middle Editorial Story */}
+        <div className="relative z-10 my-auto py-12 max-w-xl text-left space-y-6">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-[#DCE7D9] text-xs font-semibold">
+            <Sparkles className="w-3.5 h-3.5 text-[#F2D98D]" />
+            <span>Neighbourhood Tool Library</span>
+          </div>
+
+          <h1 className="font-editorial text-3xl sm:text-5xl lg:text-6xl text-white font-normal leading-[1.08] tracking-tight">
+            Good things are better <br />
+            <span className="text-[#9CAF91] italic">when shared.</span>
+          </h1>
+
+          <p className="text-sm sm:text-base text-[#DCE7D9]/90 font-sans leading-relaxed max-w-md">
+            Borrow what you need. Lend what you have. Build a stronger, more
+            connected neighbourhood one weekend project at a time.
+          </p>
+        </div>
+
+        {/* Bottom Trust Note */}
+        <div className="relative z-10 pt-6 border-t border-white/15 flex items-center gap-2 text-xs text-[#DCE7D9]/75">
+          <HeartHandshake className="w-4 h-4 text-[#F0785B] shrink-0" />
+          <span>LendLoop connects verified local residents with zero rental fees.</span>
+        </div>
+      </section>
+
+      {/* RIGHT SECTION: 40% Width Clerk Authentication Form */}
+      <section className="w-full lg:w-[40%] min-h-[500px] lg:min-h-screen flex flex-col justify-center items-center p-6 sm:p-10 lg:p-12 z-10 bg-[#F7F5EF] relative shadow-2xl lg:shadow-none">
+        <div className="w-full max-w-md mx-auto flex flex-col items-center">
+          <div className="mb-6 text-center space-y-1.5">
+            <h2 className="font-editorial text-2xl sm:text-3xl font-normal text-[#19372D]">
+              Welcome back
+            </h2>
+            <p className="text-xs sm:text-sm text-[#777D76]">
+              Sign in to manage your listings and borrowing requests.
             </p>
           </div>
 
-          <div className="pt-8 border-t border-[#244B3C] relative z-10 text-xs text-[#DCE7D9]/60">
-            “Borrow what you need. Lend what you don&apos;t.”
-          </div>
-        </div>
-
-        {/* Auth Component Right Column */}
-        <div className="lg:col-span-7 bg-[#F7F5EF] p-6 sm:p-10 flex items-center justify-center">
           <SignIn
             routing="path"
             path="/sign-in"
@@ -48,8 +91,7 @@ export default function SignInPage() {
             fallbackRedirectUrl="/dashboard"
           />
         </div>
-      </div>
+      </section>
     </main>
   );
 }
-
