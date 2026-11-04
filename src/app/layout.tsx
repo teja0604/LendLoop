@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Manrope, Fraunces } from "next/font/google";
+import { ConvexClientProvider } from "@/providers/convex-client-provider";
 import "./globals.css";
 
 const manrope = Manrope({
@@ -29,7 +30,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${manrope.variable} ${fraunces.variable} h-full scroll-smooth`}>
       <body className="min-h-screen flex flex-col bg-[#F7F5EF] text-[#292D2A] selection:bg-[#DCE7D9] selection:text-[#19372D]">
-        {children}
+        <ConvexClientProvider>{children}</ConvexClientProvider>
       </body>
     </html>
   );
