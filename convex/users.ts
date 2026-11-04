@@ -1,4 +1,4 @@
-import { mutation, query, QueryCtx, MutationCtx } from "./_generated/server";
+import { mutation, query, internalMutation, QueryCtx, MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { getAuthenticatedUser, requireAdmin } from "./authHelpers";
 
@@ -16,6 +16,7 @@ export const viewer = query({
  * Provisions or retrieves the application user record for the authenticated Clerk caller.
  * Idempotent: if the record exists, it updates displayName if needed and returns the record.
  * Default role is strictly "user" and isTrustedLender is false.
+ * A client cannot modify their own role, clerkUserId, or isTrustedLender status.
  */
 export const storeUser = mutation({
   args: {},
@@ -60,23 +61,28 @@ export const storeUser = mutation({
 });
 
 /**
- * Trusted server-side bootstrap mutation to promote an existing user to admin.
- * Can be executed securely via Convex Dashboard or Convex CLI:
+ * INTERNAL / TRUSTED SERVER-ONLY MUTATION.
+ * Inaccessible from the public API or browser clients (`api.users.bootstrapAdmin` is not generated).
+ * Can ONLY be executed via trusted Convex CLI or server dashboard:
  * `npx.cmd convex run users:bootstrapAdmin '{"clerkUserId": "user_xxx"}'`
+ *
+ * Security properties:
+ * 1. Initial bootstrap: If no admin exists in the database, elevates the specified user to 'admin'.
+ * 2. Subsequent calls: If an admin already exists, strictly requires the caller to be an authenticated admin.
+ * 3. Cannot be invoked by unauthenticated or ordinary public clients.
  */
-export const bootstrapAdmin = mutation({
+export const bootstrapAdmin = internalMutation({
   args: {
     clerkUserId: v.string(),
   },
   handler: async (ctx: MutationCtx, args: { clerkUserId: string }) => {
-    // If there is already an admin in the database, enforce that caller must be an admin
+    // If an administrator already exists, require caller to be an existing admin
     const anyAdmin = await ctx.db
       .query("users")
       .filter((q) => q.eq(q.field("role"), "admin"))
       .first();
 
     if (anyAdmin !== null) {
-      // An admin exists; require the caller to be an authenticated admin
       await requireAdmin(ctx);
     }
 
@@ -87,7 +93,7 @@ export const bootstrapAdmin = mutation({
 
     if (!targetUser) {
       throw new Error(
-        `User with clerkUserId ${args.clerkUserId} not found. Ensure the user has logged in once to provision their record.`
+        `User with clerkUserId "${args.clerkUserId}" not found in database. The user must sign in once to provision their initial user record.`
       );
     }
 
