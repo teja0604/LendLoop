@@ -4,9 +4,7 @@ import React from "react";
 import { Search, X } from "lucide-react";
 import {
   ToolCategory,
-  ToolAvailability,
   TOOL_CATEGORIES,
-  TOOL_AVAILABILITIES,
 } from "@/features/tools/types";
 import { cn } from "@/lib/utils";
 
@@ -15,8 +13,6 @@ interface ToolFiltersProps {
   onSearchChange: (query: string) => void;
   selectedCategory: ToolCategory | "All";
   onCategoryChange: (cat: ToolCategory | "All") => void;
-  selectedAvailability: ToolAvailability | "All";
-  onAvailabilityChange: (avail: ToolAvailability | "All") => void;
   onClearFilters: () => void;
   totalResults: number;
 }
@@ -26,19 +22,14 @@ export function ToolFilters({
   onSearchChange,
   selectedCategory,
   onCategoryChange,
-  selectedAvailability,
-  onAvailabilityChange,
   onClearFilters,
   totalResults,
 }: ToolFiltersProps) {
-  const isFiltered =
-    searchQuery.trim() !== "" ||
-    selectedCategory !== "All" ||
-    selectedAvailability !== "All";
+  const isFiltered = searchQuery.trim() !== "" || selectedCategory !== "All";
 
   return (
     <div className="space-y-4">
-      {/* Top Bar: Search Input & Availability Filter */}
+      {/* Top Bar: Search Input & Results Count */}
       <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
         {/* Search */}
         <div className="relative flex-1 max-w-md">
@@ -47,7 +38,7 @@ export function ToolFilters({
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search tools by name, keyword or project..."
+            placeholder="Search tools by name..."
             className="w-full pl-11 pr-10 py-2.5 rounded-full border border-[#E7E3D9] bg-white text-sm text-[#292D2A] placeholder:text-[#777D76] focus:outline-none focus:border-[#244B3C] focus:ring-2 focus:ring-[#244B3C]/10 transition-all shadow-xs"
           />
           {searchQuery && (
@@ -61,35 +52,11 @@ export function ToolFilters({
           )}
         </div>
 
-        {/* Availability dropdown & quick stats */}
-        <div className="flex items-center gap-2 justify-between sm:justify-end">
-          <div className="flex items-center gap-1.5 text-xs text-[#777D76] font-medium px-1">
-            <span>Showing</span>
-            <span className="font-semibold text-[#19372D]">{totalResults}</span>
-            <span>{totalResults === 1 ? "tool" : "tools"}</span>
-          </div>
-
-          <div className="flex items-center gap-1 bg-white border border-[#E7E3D9] rounded-full p-1 shadow-xs text-xs">
-            <span className="pl-2 pr-1 text-[#777D76] hidden md:inline">
-              Status:
-            </span>
-            {(["All", ...TOOL_AVAILABILITIES] as (ToolAvailability | "All")[]).map(
-              (status) => (
-                <button
-                  key={status}
-                  onClick={() => onAvailabilityChange(status)}
-                  className={cn(
-                    "px-3 py-1 rounded-full font-medium transition-all text-xs",
-                    selectedAvailability === status
-                      ? "bg-[#244B3C] text-[#F7F5EF] shadow-xs"
-                      : "text-[#777D76] hover:text-[#292D2A]"
-                  )}
-                >
-                  {status}
-                </button>
-              )
-            )}
-          </div>
+        {/* Quick stats */}
+        <div className="flex items-center gap-1.5 text-xs text-[#777D76] font-medium px-1">
+          <span>Showing</span>
+          <span className="font-semibold text-[#19372D]">{totalResults}</span>
+          <span>available {totalResults === 1 ? "tool" : "tools"}</span>
         </div>
       </div>
 

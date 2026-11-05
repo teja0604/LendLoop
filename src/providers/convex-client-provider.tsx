@@ -1,9 +1,30 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useRef, useEffect } from "react";
 import { ClerkProvider, useAuth } from "@clerk/nextjs";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
-import { ConvexReactClient } from "convex/react";
+import { ConvexReactClient, useConvexAuth, useMutation } from "convex/react";
+import { api } from "../../convex/_generated/api";
+
+function UserSync({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading } = useConvexAuth();
+  const storeUser = useMutation(api.users.storeUser);
+  const syncedRef = useRef(false);
+
+  useEffect(() => {
+    if (isAuthenticated && !isLoading && !syncedRef.current) {
+      syncedRef.current = true;
+      storeUser().catch((err) => {
+        syncedRef.current = false;
+        console.error("Failed to sync authenticated user with Convex:", err);
+      });
+    } else if (!isAuthenticated) {
+      syncedRef.current = false;
+    }
+  }, [isAuthenticated, isLoading, storeUser]);
+
+  return <>{children}</>;
+}
 
 export function ConvexClientProvider({
   children,
@@ -26,7 +47,7 @@ export function ConvexClientProvider({
       }}
     >
       <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
-        {children}
+        <UserSync>{children}</UserSync>
       </ConvexProviderWithClerk>
     </ClerkProvider>
   );

@@ -7,7 +7,6 @@ import { HeroSection } from "@/components/hero/hero-section";
 import { ToolGrid } from "@/components/tools/tool-grid";
 import { HowItWorks } from "@/components/sections/how-it-works";
 import { CommunitySection } from "@/components/sections/community-section";
-import { INITIAL_MOCK_TOOLS } from "@/features/tools/mock-tools";
 
 export default function LandingPage() {
   const [isAddToolOpen, setIsAddToolOpen] = useState(false);
@@ -47,7 +46,6 @@ export default function LandingPage() {
           </div>
 
           <ToolGrid
-            initialTools={INITIAL_MOCK_TOOLS}
             isAddToolOpen={isAddToolOpen}
             onCloseAddTool={() => setIsAddToolOpen(false)}
           />

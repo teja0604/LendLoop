@@ -1,3 +1,5 @@
+import { Id, Doc } from "../../../convex/_generated/dataModel";
+
 export type ToolCategory =
   | "Power Tools"
   | "Garden"
@@ -10,6 +12,14 @@ export type ToolCondition = "New" | "Excellent" | "Good" | "Fair";
 
 export type ToolAvailability = "Available" | "On loan" | "Reserved";
 
+export interface PublicToolItem {
+  _id: Id<"tools">;
+  name: string;
+  category: ToolCategory;
+}
+
+export type MyToolItem = Doc<"tools">;
+
 export interface ToolItem {
   id: string;
   name: string;
@@ -18,14 +28,7 @@ export interface ToolItem {
   availability: ToolAvailability;
   description: string;
   imageUrl?: string;
-  locationArea?: string; // e.g. "Maple Hill / 0.4 mi"
-}
-
-export interface BorrowRequestInput {
-  toolId: string;
-  startDate: string;
-  endDate: string;
-  notes?: string;
+  locationArea?: string;
 }
 
 export interface AddToolInput {
@@ -33,7 +36,14 @@ export interface AddToolInput {
   category: ToolCategory;
   condition: ToolCondition;
   description: string;
-  imageUrl?: string;
+}
+
+export interface UpdateToolInput {
+  toolId: Id<"tools">;
+  name: string;
+  category: ToolCategory;
+  condition: ToolCondition;
+  description: string;
 }
 
 export const TOOL_CATEGORIES: ToolCategory[] = [

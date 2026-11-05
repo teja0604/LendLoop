@@ -98,7 +98,7 @@ export function Navbar({ onOpenAddTool }: NavbarProps) {
                 pathname === "/listings" && "text-[#244B3C] font-semibold"
               )}
             >
-              My Listings
+              My Tools
             </Link>
             <Link
               href="/my-requests"
@@ -233,7 +233,7 @@ export function Navbar({ onOpenAddTool }: NavbarProps) {
                 onClick={() => setIsMobileMenuOpen(false)}
                 className="px-3 py-2 rounded-xl hover:bg-[#DCE7D9]/50 transition-colors"
               >
-                My Listings
+                My Tools
               </Link>
               <Link
                 href="/my-requests"

@@ -2,11 +2,11 @@
 
 import React, { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { useQuery } from "convex/react";
+import { api } from "../../../convex/_generated/api";
 import {
-  ToolItem,
   ToolCategory,
-  ToolAvailability,
-  AddToolInput,
+  PublicToolItem,
 } from "@/features/tools/types";
 import { ToolCard } from "./tool-card";
 import { ToolFilters } from "./tool-filters";
@@ -14,29 +14,28 @@ import { ToolDetailDialog } from "./tool-detail-dialog";
 import { AddToolDialog } from "./add-tool-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ToastContainer, ToastMessage } from "@/components/ui/toast";
+import { Loader2 } from "lucide-react";
 
 interface ToolGridProps {
-  initialTools: ToolItem[];
   isAddToolOpen: boolean;
   onCloseAddTool: () => void;
 }
 
 export function ToolGrid({
-  initialTools,
   isAddToolOpen,
   onCloseAddTool,
 }: ToolGridProps) {
-  const [tools, setTools] = useState<ToolItem[]>(initialTools);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState<
-    ToolCategory | "All"
-  >("All");
-  const [selectedAvailability, setSelectedAvailability] = useState<
-    ToolAvailability | "All"
-  >("All");
-
-  const [selectedTool, setSelectedTool] = useState<ToolItem | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<ToolCategory | "All">("All");
+  const [selectedTool, setSelectedTool] = useState<PublicToolItem | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  // Live Convex query with server-side category filtering
+  const queryArgs = useMemo(() => {
+    return selectedCategory === "All" ? {} : { category: selectedCategory };
+  }, [selectedCategory]);
+
+  const publicTools = useQuery(api.tools.getPublicAvailableTools, queryArgs);
 
   const addToast = (toast: Omit<ToastMessage, "id">) => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -47,71 +46,20 @@ export function ToolGrid({
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Filtered tools
+  // Filtered tools by search query
   const filteredTools = useMemo(() => {
-    return tools.filter((tool) => {
-      // Search query (name or category or description)
-      const matchesSearch =
-        searchQuery.trim() === "" ||
-        tool.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        tool.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        tool.description.toLowerCase().includes(searchQuery.toLowerCase());
+    if (!publicTools) return [];
+    if (!searchQuery.trim()) return publicTools;
 
-      // Category
-      const matchesCategory =
-        selectedCategory === "All" || tool.category === selectedCategory;
-
-      // Availability
-      const matchesAvailability =
-        selectedAvailability === "All" ||
-        tool.availability === selectedAvailability;
-
-      return matchesSearch && matchesCategory && matchesAvailability;
-    });
-  }, [tools, searchQuery, selectedCategory, selectedAvailability]);
-
-  // Handle borrow request demo
-  const handleBorrowRequest = ({
-    tool,
-    startDate,
-    endDate,
-  }: {
-    tool: ToolItem;
-    startDate: string;
-    endDate: string;
-  }) => {
-    addToast({
-      type: "success",
-      title: "Borrow request submitted (Demo)",
-      message: `Your test request for ${tool.name} (${startDate} to ${endDate}) was logged locally.`,
-    });
-  };
-
-  // Handle add tool demo
-  const handleAddTool = (newToolInput: AddToolInput) => {
-    const newTool: ToolItem = {
-      id: `tool-${Date.now()}`,
-      name: newToolInput.name,
-      category: newToolInput.category,
-      condition: newToolInput.condition,
-      availability: "Available",
-      description: newToolInput.description,
-      imageUrl: newToolInput.imageUrl,
-      locationArea: "Just listed nearby",
-    };
-
-    setTools((prev) => [newTool, ...prev]);
-    addToast({
-      type: "success",
-      title: "Tool listed successfully (Demo)",
-      message: `"${newTool.name}" is now listed in your local session discovery grid.`,
-    });
-  };
+    const query = searchQuery.toLowerCase().trim();
+    return publicTools.filter((tool) =>
+      tool.name.toLowerCase().includes(query)
+    );
+  }, [publicTools, searchQuery]);
 
   const clearFilters = () => {
     setSearchQuery("");
     setSelectedCategory("All");
-    setSelectedAvailability("All");
   };
 
   return (
@@ -122,14 +70,20 @@ export function ToolGrid({
         onSearchChange={setSearchQuery}
         selectedCategory={selectedCategory}
         onCategoryChange={setSelectedCategory}
-        selectedAvailability={selectedAvailability}
-        onAvailabilityChange={setSelectedAvailability}
         onClearFilters={clearFilters}
         totalResults={filteredTools.length}
       />
 
-      {/* Grid or Empty State */}
-      {filteredTools.length > 0 ? (
+      {/* Loading State */}
+      {publicTools === undefined ? (
+        <div className="py-20 flex flex-col items-center justify-center space-y-3 text-center">
+          <Loader2 className="w-8 h-8 text-[#244B3C] animate-spin" />
+          <p className="text-xs text-[#777D76]">
+            Fetching neighborhood catalog from Convex...
+          </p>
+        </div>
+      ) : filteredTools.length > 0 ? (
+        /* Results Grid */
         <motion.div
           layout
           className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
@@ -137,7 +91,7 @@ export function ToolGrid({
           <AnimatePresence mode="popLayout">
             {filteredTools.map((tool) => (
               <motion.div
-                key={tool.id}
+                key={tool._id}
                 layout
                 initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -149,10 +103,19 @@ export function ToolGrid({
             ))}
           </AnimatePresence>
         </motion.div>
+      ) : publicTools.length === 0 && selectedCategory === "All" && !searchQuery.trim() ? (
+        /* Completely Empty Catalog */
+        <EmptyState
+          title="No tools listed in the community yet"
+          description="Be the first neighbor to list equipment from your garage or shed and help start your local tool-sharing loop!"
+          actionLabel="List a tool"
+          onAction={onCloseAddTool}
+        />
       ) : (
+        /* Filtered Empty State */
         <EmptyState
           title="No tools match your search"
-          description="Try adjusting your keywords, expanding your category selection, or resetting status filters to discover more items."
+          description="Try adjusting your keywords, expanding your category selection, or clearing your filters to discover more items."
           actionLabel="Clear all filters"
           onAction={clearFilters}
         />
@@ -163,14 +126,19 @@ export function ToolGrid({
         tool={selectedTool}
         isOpen={Boolean(selectedTool)}
         onClose={() => setSelectedTool(null)}
-        onRequestSubmit={handleBorrowRequest}
       />
 
       {/* Add Tool Dialog */}
       <AddToolDialog
         isOpen={isAddToolOpen}
         onClose={onCloseAddTool}
-        onAddTool={handleAddTool}
+        onSuccess={(toolName) => {
+          addToast({
+            type: "success",
+            title: "Tool Listed Successfully",
+            message: `"${toolName}" has been added to the neighborhood pool.`,
+          });
+        }}
       />
 
       {/* Toasts */}
