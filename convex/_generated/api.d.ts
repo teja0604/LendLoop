@@ -9,6 +9,9 @@
  */
 
 import type * as authHelpers from "../authHelpers.js";
+import type * as borrowRequests from "../borrowRequests.js";
+import type * as dateUtils from "../dateUtils.js";
+import type * as loans from "../loans.js";
 import type * as tools from "../tools.js";
 import type * as users from "../users.js";
 
@@ -20,6 +23,9 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   authHelpers: typeof authHelpers;
+  borrowRequests: typeof borrowRequests;
+  dateUtils: typeof dateUtils;
+  loans: typeof loans;
   tools: typeof tools;
   users: typeof users;
 }>;

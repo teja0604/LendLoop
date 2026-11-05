@@ -12,6 +12,10 @@ export type ToolCondition = "New" | "Excellent" | "Good" | "Fair";
 
 export type ToolAvailability = "Available" | "On loan" | "Reserved";
 
+export type RequestStatus = "pending" | "approved" | "declined";
+
+export type LoanStatus = "active" | "returned";
+
 export interface PublicToolItem {
   _id: Id<"tools">;
   name: string;
@@ -44,6 +48,58 @@ export interface UpdateToolInput {
   category: ToolCategory;
   condition: ToolCondition;
   description: string;
+}
+
+export interface BorrowRequestWithDetails {
+  _id: Id<"borrowRequests">;
+  toolId: Id<"tools">;
+  lenderId: Id<"users">;
+  borrowerId: Id<"users">;
+  startDate: string;
+  endDate: string;
+  status: RequestStatus;
+  createdAt: number;
+  updatedAt: number;
+  tool: {
+    _id: Id<"tools">;
+    name: string;
+    category: ToolCategory;
+    condition: ToolCondition;
+    isActive: boolean;
+  } | null;
+  lender?: {
+    displayName: string;
+    isTrustedLender: boolean;
+  } | null;
+  borrower?: {
+    displayName: string;
+  } | null;
+}
+
+export interface LoanWithDetails {
+  _id: Id<"loans">;
+  requestId: Id<"borrowRequests">;
+  toolId: Id<"tools">;
+  lenderId: Id<"users">;
+  borrowerId: Id<"users">;
+  startDate: string;
+  dueDate: string;
+  status: LoanStatus;
+  returnedAt?: number;
+  createdAt: number;
+  role: "lender" | "borrower";
+  isOverdue: boolean;
+  tool: {
+    _id: Id<"tools">;
+    name: string;
+    category: ToolCategory;
+    condition: ToolCondition;
+    isActive: boolean;
+  } | null;
+  otherParticipant: {
+    displayName: string;
+    isTrustedLender?: boolean;
+  } | null;
 }
 
 export const TOOL_CATEGORIES: ToolCategory[] = [

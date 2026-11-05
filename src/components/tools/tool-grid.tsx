@@ -126,6 +126,13 @@ export function ToolGrid({
         tool={selectedTool}
         isOpen={Boolean(selectedTool)}
         onClose={() => setSelectedTool(null)}
+        onRequestSubmitted={(toolName) => {
+          addToast({
+            type: "success",
+            title: "Borrow Request Sent",
+            message: `Your request for "${toolName}" has been sent to the lender.`,
+          });
+        }}
       />
 
       {/* Add Tool Dialog */}

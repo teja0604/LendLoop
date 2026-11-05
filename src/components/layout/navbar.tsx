@@ -70,7 +70,7 @@ export function Navbar({ onOpenAddTool }: NavbarProps) {
         </Link>
 
         {/* Desktop Navigation */}
-        <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-[#292D2A]">
+        <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-[#292D2A]">
           <Link
             href="/"
             className={cn(
@@ -117,6 +117,15 @@ export function Navbar({ onOpenAddTool }: NavbarProps) {
               )}
             >
               Incoming Requests
+            </Link>
+            <Link
+              href="/loans"
+              className={cn(
+                "hover:text-[#244B3C] transition-colors",
+                pathname === "/loans" && "text-[#244B3C] font-semibold"
+              )}
+            >
+              My Loans
             </Link>
 
             {/* Admin only badge and link */}
@@ -248,6 +257,13 @@ export function Navbar({ onOpenAddTool }: NavbarProps) {
                 className="px-3 py-2 rounded-xl hover:bg-[#DCE7D9]/50 transition-colors"
               >
                 Incoming Requests
+              </Link>
+              <Link
+                href="/loans"
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="px-3 py-2 rounded-xl hover:bg-[#DCE7D9]/50 transition-colors"
+              >
+                My Loans
               </Link>
               {isAdmin && (
                 <Link

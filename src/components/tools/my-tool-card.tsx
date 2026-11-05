@@ -97,3 +97,4 @@ export function MyToolCard({ tool, onEdit, onDeactivate }: MyToolCardProps) {
     </div>
   );
 }
+
