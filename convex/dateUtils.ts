@@ -107,8 +107,9 @@ export function doIntervalsOverlap(
 
 /**
  * Determines whether an active loan is overdue.
- * An active loan is overdue when its dueDate is strictly before today's calendar date.
+ * In the half-open interval model [startDate, dueDate), dueDate is the exclusive return boundary.
+ * An active loan becomes overdue on the exclusive due-date boundary (dueDate <= today).
  */
 export function isOverdue(dueDate: string, today = getTodayUtcDateString()): boolean {
-  return dueDate < today;
+  return dueDate <= today;
 }
