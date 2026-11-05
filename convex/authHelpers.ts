@@ -1,5 +1,5 @@
 import { QueryCtx, MutationCtx } from "./_generated/server";
-import { Doc } from "./_generated/dataModel";
+import { Doc, Id } from "./_generated/dataModel";
 
 /**
  * Retrieves the application user document for the currently authenticated caller.
@@ -61,3 +61,22 @@ export async function requireAdmin(
   return { identity, user };
 }
 
+/**
+ * Enforces that the caller is the owner of a specific resource or an administrator.
+ * Throws an error if the caller is not authorized.
+ */
+export async function requireOwnerOrAdmin(
+  ctx: QueryCtx | MutationCtx,
+  ownerId: Id<"users">
+): Promise<{ user: Doc<"users">; isAdmin: boolean }> {
+  const { user } = await requireAuthenticatedUser(ctx);
+
+  const isOwner = user._id === ownerId;
+  const isAdmin = user.role === "admin";
+
+  if (!isOwner && !isAdmin) {
+    throw new Error("Forbidden: You do not have permission to access or modify this record.");
+  }
+
+  return { user, isAdmin };
+}
