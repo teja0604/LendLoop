@@ -6,6 +6,8 @@ const isProtectedRoute = createRouteMatcher([
   "/listings(.*)",
   "/my-requests(.*)",
   "/incoming-requests(.*)",
+  "/loans(.*)",
+  "/requests(.*)",
   "/admin(.*)",
 ]);
 
