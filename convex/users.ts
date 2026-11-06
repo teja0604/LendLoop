@@ -71,7 +71,7 @@ export const storeUser = mutation({
  * 2. Subsequent calls: If an admin already exists, strictly requires the caller to be an authenticated admin.
  * 3. Cannot be invoked by unauthenticated or ordinary public clients.
  */
-export const bootstrapAdmin = mutation({
+export const bootstrapAdmin = internalMutation({
   args: {
     clerkUserId: v.string(),
   },
