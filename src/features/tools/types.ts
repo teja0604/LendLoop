@@ -123,3 +123,82 @@ export const TOOL_AVAILABILITIES: ToolAvailability[] = [
   "On loan",
   "Reserved",
 ];
+
+export interface AdminPlatformStats {
+  totalUsers: number;
+  trustedLendersCount: number;
+  totalTools: number;
+  activeToolsCount: number;
+  inactiveToolsCount: number;
+  totalLoans: number;
+  activeLoansCount: number;
+  overdueLoansCount: number;
+  returnedLoansCount: number;
+  totalRequests: number;
+  pendingRequestsCount: number;
+  approvedRequestsCount: number;
+  declinedRequestsCount: number;
+}
+
+export interface AdminUserItem {
+  _id: Id<"users">;
+  clerkUserId: string;
+  displayName: string;
+  role: "user" | "admin";
+  isTrustedLender: boolean;
+  createdAt: number;
+  toolsCount: number;
+  activeToolsCount: number;
+  activeLoansAsLenderCount: number;
+  activeLoansAsBorrowerCount: number;
+}
+
+export interface AdminLoanItem {
+  _id: Id<"loans">;
+  requestId: Id<"borrowRequests">;
+  startDate: string;
+  dueDate: string;
+  status: LoanStatus;
+  returnedAt?: number;
+  createdAt: number;
+  isOverdue: boolean;
+  tool: {
+    _id: Id<"tools">;
+    name: string;
+    category: ToolCategory;
+    condition: ToolCondition;
+    isActive: boolean;
+  } | null;
+  lender: {
+    _id: Id<"users">;
+    displayName: string;
+    isTrustedLender: boolean;
+    clerkUserId: string;
+  } | null;
+  borrower: {
+    _id: Id<"users">;
+    displayName: string;
+    isTrustedLender: boolean;
+    clerkUserId: string;
+  } | null;
+}
+
+export interface AdminToolItem {
+  _id: Id<"tools">;
+  name: string;
+  category: ToolCategory;
+  condition: ToolCondition;
+  description: string;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+  owner: {
+    _id: Id<"users">;
+    displayName: string;
+    isTrustedLender: boolean;
+    clerkUserId: string;
+  } | null;
+  totalLoansCount: number;
+  hasActiveLoan: boolean;
+}
+
