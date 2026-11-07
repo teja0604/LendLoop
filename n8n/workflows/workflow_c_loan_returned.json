@@ -12,33 +12,86 @@
       "name": "Webhook: loan.returned",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [240, 300],
+      "position": [200, 300],
       "webhookId": "lendloop-loan-returned"
     },
     {
       "parameters": {
-        "jsCode": "// Extract return event payload\nconst body = $input.first().json.body;\n\nif (body.eventType !== 'loan.returned') {\n  throw new Error(`Unexpected event type: ${body.eventType}`);\n}\n\nreturn {\n  eventId: body.eventId,\n  requestId: body.data.requestId,\n  loanId: body.data.loanId,\n  toolName: body.data.tool ? body.data.tool.name : 'Tool',\n  borrowerName: body.data.borrower ? body.data.borrower.displayName : 'Borrower',\n  borrowerUserId: body.data.borrower ? body.data.borrower._id : null,\n  lenderName: body.data.lender ? body.data.lender.displayName : 'Lender',\n  lenderUserId: body.data.lender ? body.data.lender._id : null,\n  returnedAt: Date.now()\n};"
+        "jsCode": "const crypto = require('crypto');\n\nconst headers = $input.first().json.headers || {};\nconst rawBody = $input.first().json.rawBody || JSON.stringify($input.first().json.body);\nconst body = $input.first().json.body;\n\nconst signatureHeader = headers['x-lendloop-signature'] || headers['X-LendLoop-Signature'];\nconst timestampHeader = headers['x-lendloop-timestamp'] || headers['X-LendLoop-Timestamp'];\nconst secret = $env.N8N_WEBHOOK_HMAC_SECRET;\n\nif (!secret) {\n  throw new Error('N8N_WEBHOOK_HMAC_SECRET environment variable is missing.');\n}\n\nif (!signatureHeader || !timestampHeader) {\n  throw new Error('Unauthorized: Missing signature or timestamp header.');\n}\n\nconst timestamp = parseInt(timestampHeader, 10);\nconst now = Date.now();\nif (isNaN(timestamp) || Math.abs(now - timestamp) > 300000) {\n  throw new Error('Unauthorized: Request timestamp expired or outside 5-minute tolerance.');\n}\n\nconst expectedSignature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\nconst receivedHex = signatureHeader.replace(/^sha256=/, '').trim();\n\nif (receivedHex.length !== expectedSignature.length || !crypto.timingSafeEqual(Buffer.from(receivedHex, 'hex'), Buffer.from(expectedSignature, 'hex'))) {\n  throw new Error('Unauthorized: HMAC signature mismatch. Payload may have been tampered with.');\n}\n\nif (body.eventType !== 'loan.returned') {\n  throw new Error(`Routing Error: Invalid event type ${body.eventType} sent to Workflow C.`);\n}\n\nconst borrowerEmail = body.data.borrower ? body.data.borrower.email : null;\nconst borrowerName = body.data.borrower ? body.data.borrower.displayName : 'Borrower';\nconst lenderName = body.data.lender ? body.data.lender.displayName : 'Lender';\nconst toolName = body.data.tool ? body.data.tool.name : 'Tool';\n\nreturn {\n  eventId: body.eventId,\n  requestId: body.data.requestId,\n  loanId: body.data.loanId,\n  eventType: 'loan.returned',\n  toolName,\n  borrowerName,\n  borrowerEmail,\n  recipientUserId: body.data.borrower ? body.data.borrower._id : null,\n  subject: `Tool Return Confirmation: ${toolName}`,\n  emailBody: `Hi ${borrowerName},\\n\\nThank you for returning \"${toolName}\" to ${lenderName}! We hope it was helpful for your project.\\n\\nYour neighborhood lending community appreciates your care and prompt return.`,\n  idempotencyKey: `notif:loan_returned:${body.data.loanId}`\n};"
       },
-      "id": "extract-return-data",
-      "name": "Extract Return Event Data",
+      "id": "verify-return-hmac",
+      "name": "Verify HMAC & Extract Return Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [460, 300]
+      "position": [440, 300]
     },
     {
       "parameters": {
-        "jsCode": "// Format return thank you & confirmation notifications\nconst item = $input.first().json;\n\nreturn {\n  ...item,\n  borrowerSubject: `Tool Return Confirmation: ${item.toolName}`,\n  borrowerMessage: `Hi ${item.borrowerName},\\n\\nThank you for returning ${item.toolName} to ${item.lenderName}! We hope it was helpful for your project.`,\n  lenderSubject: `Tool Returned: ${item.toolName}`,\n  lenderMessage: `Hi ${item.lenderName},\\n\\n${item.borrowerName} has returned your ${item.toolName}. Thank you for lending to your neighborhood!`,\n  idempotencyKey: `notif:loan_returned:${item.loanId}`,\n  summary: `Recorded tool return and sent thank-you notices for loan ${item.loanId} (${item.toolName})`\n};"
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-borrower-email",
+              "leftValue": "={{ $input.first().json.borrowerEmail || '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
       },
-      "id": "format-return-notice",
-      "name": "Format Return Notifications",
+      "id": "check-borrower-email-present",
+      "name": "Borrower Email Available?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_SENDER_EMAIL || 'notifications@lendloop.org' }}",
+        "toEmail": "={{ $input.first().json.borrowerEmail }}",
+        "subject": "={{ $input.first().json.subject }}",
+        "text": "={{ $input.first().json.emailBody }}",
+        "options": {}
+      },
+      "id": "send-return-email",
+      "name": "Send Return Confirmation Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [880, 220],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.first().json;\nconst secret = $env.N8N_WEBHOOK_HMAC_SECRET;\nconst timestamp = Date.now().toString();\n\nconst writeback = {\n  idempotencyKey: item.idempotencyKey,\n  requestId: item.requestId,\n  loanId: item.loanId,\n  eventType: 'loan.returned',\n  recipientUserId: item.recipientUserId,\n  result: 'sent',\n  summary: `Return confirmation email sent to borrower (${item.borrowerEmail}) for tool ${item.toolName} (loan ${item.loanId})`\n};\n\nconst rawBody = JSON.stringify(writeback);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn {\n  signature: `sha256=${signature}`,\n  timestamp,\n  body: rawBody\n};"
+      },
+      "id": "sign-return-success",
+      "name": "Sign Success Write-Back",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [680, 300]
+      "position": [1100, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.first().json;\nconst secret = $env.N8N_WEBHOOK_HMAC_SECRET;\nconst timestamp = Date.now().toString();\n\nconst writeback = {\n  idempotencyKey: item.idempotencyKey,\n  requestId: item.requestId,\n  loanId: item.loanId,\n  eventType: 'loan.returned',\n  recipientUserId: item.recipientUserId,\n  result: 'failed',\n  summary: item.borrowerEmail ? 'SMTP provider delivery failed for return confirmation.' : 'Notification skipped: Borrower email address not configured.'\n};\n\nconst rawBody = JSON.stringify(writeback);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn {\n  signature: `sha256=${signature}`,\n  timestamp,\n  body: rawBody\n};"
+      },
+      "id": "sign-return-failure",
+      "name": "Sign Failure Write-Back",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 400]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.CONVEX_SITE_URL || 'http://localhost:3000' }}/api/webhooks/n8n/activity",
+        "url": "={{ ($env.CONVEX_SITE_URL || 'http://localhost:3000').replace(/\\/+$/, '') }}/api/webhooks/n8n/activity",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -48,24 +101,24 @@
             },
             {
               "name": "X-LendLoop-Signature",
-              "value": "sha256=automated_workflow_signature"
+              "value": "={{ $input.first().json.signature }}"
             },
             {
               "name": "X-LendLoop-Timestamp",
-              "value": "={{ Date.now().toString() }}"
+              "value": "={{ $input.first().json.timestamp }}"
             }
           ]
         },
         "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"idempotencyKey\": \"{{ $input.first().json.idempotencyKey }}\",\n  \"requestId\": \"{{ $input.first().json.requestId }}\",\n  \"loanId\": \"{{ $input.first().json.loanId }}\",\n  \"eventType\": \"loan.returned\",\n  \"recipientUserId\": \"{{ $input.first().json.borrowerUserId }}\",\n  \"result\": \"sent\",\n  \"summary\": \"{{ $input.first().json.summary }}\"\n}",
+        "specifyBody": "string",
+        "body": "={{ $input.first().json.body }}",
         "options": {}
       },
-      "id": "writeback-return",
-      "name": "Writeback Return Activity",
+      "id": "convex-return-writeback",
+      "name": "Convex Return Writeback",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 300]
+      "position": [1340, 300]
     }
   ],
   "connections": {
@@ -73,29 +126,69 @@
       "main": [
         [
           {
-            "node": "Extract Return Event Data",
+            "node": "Verify HMAC & Extract Return Data",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Extract Return Event Data": {
+    "Verify HMAC & Extract Return Data": {
       "main": [
         [
           {
-            "node": "Format Return Notifications",
+            "node": "Borrower Email Available?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format Return Notifications": {
+    "Borrower Email Available?": {
       "main": [
         [
           {
-            "node": "Writeback Return Activity",
+            "node": "Send Return Confirmation Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sign Failure Write-Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Return Confirmation Email": {
+      "main": [
+        [
+          {
+            "node": "Sign Success Write-Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Success Write-Back": {
+      "main": [
+        [
+          {
+            "node": "Convex Return Writeback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Failure Write-Back": {
+      "main": [
+        [
+          {
+            "node": "Convex Return Writeback",
             "type": "main",
             "index": 0
           }

@@ -12,50 +12,86 @@
       "name": "Webhook: loan.overdue",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [240, 200],
+      "position": [200, 300],
       "webhookId": "lendloop-overdue-reminder"
     },
     {
       "parameters": {
-        "rule": {
-          "interval": [
+        "jsCode": "const crypto = require('crypto');\n\nconst headers = $input.first().json.headers || {};\nconst rawBody = $input.first().json.rawBody || JSON.stringify($input.first().json.body);\nconst body = $input.first().json.body;\n\nconst signatureHeader = headers['x-lendloop-signature'] || headers['X-LendLoop-Signature'];\nconst timestampHeader = headers['x-lendloop-timestamp'] || headers['X-LendLoop-Timestamp'];\nconst secret = $env.N8N_WEBHOOK_HMAC_SECRET;\n\nif (!secret) {\n  throw new Error('N8N_WEBHOOK_HMAC_SECRET environment variable is missing.');\n}\n\nif (!signatureHeader || !timestampHeader) {\n  throw new Error('Unauthorized: Missing signature or timestamp header.');\n}\n\nconst timestamp = parseInt(timestampHeader, 10);\nconst now = Date.now();\nif (isNaN(timestamp) || Math.abs(now - timestamp) > 300000) {\n  throw new Error('Unauthorized: Request timestamp expired or outside 5-minute tolerance.');\n}\n\nconst expectedSignature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\nconst receivedHex = signatureHeader.replace(/^sha256=/, '').trim();\n\nif (receivedHex.length !== expectedSignature.length || !crypto.timingSafeEqual(Buffer.from(receivedHex, 'hex'), Buffer.from(expectedSignature, 'hex'))) {\n  throw new Error('Unauthorized: HMAC signature mismatch. Payload may have been tampered with.');\n}\n\nif (body.eventType !== 'loan.overdue') {\n  throw new Error(`Routing Error: Invalid event type ${body.eventType} sent to Workflow D.`);\n}\n\nconst borrowerEmail = body.data.borrower ? body.data.borrower.email : null;\nconst borrowerName = body.data.borrower ? body.data.borrower.displayName : 'Borrower';\nconst toolName = body.data.tool ? body.data.tool.name : 'Borrowed Tool';\nconst dueDate = body.data.loan ? body.data.loan.dueDate : 'Past due date';\nconst today = new Date().toISOString().slice(0, 10);\n\nreturn {\n  eventId: body.eventId,\n  requestId: body.data.requestId,\n  loanId: body.data.loanId,\n  eventType: 'loan.overdue',\n  toolName,\n  borrowerName,\n  borrowerEmail,\n  recipientUserId: body.data.borrower ? body.data.borrower._id : null,\n  dueDate,\n  today,\n  subject: `Urgent Reminder: Tool Return Overdue (${toolName})`,\n  emailBody: `Hello ${borrowerName},\\n\\nThis is a friendly neighborhood reminder from LendLoop that your loan for \"${toolName}\" was due on ${dueDate}.\\n\\nPlease return the tool promptly to your neighbor or reach out to them if you need to coordinate an extension.`,\n  idempotencyKey: `overdue:${body.data.loanId}:${today}`\n};"
+      },
+      "id": "verify-overdue-hmac",
+      "name": "Verify HMAC & Extract Overdue Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
             {
-              "field": "cronExpression",
-              "expression": "0 8 * * *"
+              "id": "check-borrower-email",
+              "leftValue": "={{ $input.first().json.borrowerEmail || '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
             }
-          ]
+          ],
+          "combinator": "and"
         }
       },
-      "id": "schedule-trigger",
-      "name": "Daily Overdue Scan Cron",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
-      "position": [240, 400]
+      "id": "check-borrower-email-present",
+      "name": "Borrower Email Available?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
     },
     {
       "parameters": {
-        "jsCode": "// Extract overdue loan details\nconst input = $input.first().json;\nconst isFromWebhook = Boolean(input.body && input.body.eventType);\n\nif (isFromWebhook) {\n  const body = input.body;\n  return {\n    loanId: body.data.loanId,\n    requestId: body.data.requestId,\n    toolName: body.data.tool ? body.data.tool.name : 'Borrowed Tool',\n    borrowerName: body.data.borrower ? body.data.borrower.displayName : 'Borrower',\n    borrowerUserId: body.data.borrower ? body.data.borrower._id : null,\n    dueDate: body.data.loan ? body.data.loan.dueDate : 'Past due',\n    today: new Date().toISOString().slice(0, 10)\n  };\n}\n\n// Triggered by schedule\nreturn {\n  scheduledScan: true,\n  today: new Date().toISOString().slice(0, 10)\n};"
+        "fromEmail": "={{ $env.SMTP_SENDER_EMAIL || 'notifications@lendloop.org' }}",
+        "toEmail": "={{ $input.first().json.borrowerEmail }}",
+        "subject": "={{ $input.first().json.subject }}",
+        "text": "={{ $input.first().json.emailBody }}",
+        "options": {}
       },
-      "id": "normalize-overdue",
-      "name": "Normalize Overdue Payload",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [480, 300]
+      "id": "send-overdue-email",
+      "name": "Send Overdue Reminder Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [880, 220],
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first().json;\n\nif (item.scheduledScan) {\n  return {\n    skipWriteback: true,\n    summary: `Daily scheduled scan triggered for ${item.today}`\n  };\n}\n\nreturn {\n  ...item,\n  subject: `Urgent Reminder: Tool Return Overdue (${item.toolName})`,\n  body: `Hello ${item.borrowerName},\\n\\nThis is a friendly reminder from LendLoop that your loan for ${item.toolName} was due on ${item.dueDate}.\\n\\nPlease return the tool promptly to your neighbor or communicate with them if you need an extension.`,\n  idempotencyKey: `overdue:${item.loanId}:${item.today}`,\n  summary: `Automated overdue reminder sent to ${item.borrowerName} for loan ${item.loanId} (due ${item.dueDate})`\n};"
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.first().json;\nconst secret = $env.N8N_WEBHOOK_HMAC_SECRET;\nconst timestamp = Date.now().toString();\n\nconst writeback = {\n  idempotencyKey: item.idempotencyKey,\n  requestId: item.requestId,\n  loanId: item.loanId,\n  eventType: 'loan.overdue',\n  recipientUserId: item.recipientUserId,\n  result: 'sent',\n  summary: `Overdue reminder email sent to borrower (${item.borrowerEmail}) for loan ${item.loanId} (${item.toolName})`\n};\n\nconst rawBody = JSON.stringify(writeback);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn {\n  signature: `sha256=${signature}`,\n  timestamp,\n  body: rawBody\n};"
       },
-      "id": "format-overdue-reminder",
-      "name": "Format Overdue Notice",
+      "id": "sign-overdue-success",
+      "name": "Sign Success Write-Back",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [700, 300]
+      "position": [1100, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.first().json;\nconst secret = $env.N8N_WEBHOOK_HMAC_SECRET;\nconst timestamp = Date.now().toString();\n\nconst writeback = {\n  idempotencyKey: item.idempotencyKey,\n  requestId: item.requestId,\n  loanId: item.loanId,\n  eventType: 'loan.overdue',\n  recipientUserId: item.recipientUserId,\n  result: 'failed',\n  summary: item.borrowerEmail ? 'SMTP provider delivery failed for overdue reminder.' : 'Notification skipped: Borrower email address not configured.'\n};\n\nconst rawBody = JSON.stringify(writeback);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn {\n  signature: `sha256=${signature}`,\n  timestamp,\n  body: rawBody\n};"
+      },
+      "id": "sign-overdue-failure",
+      "name": "Sign Failure Write-Back",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 400]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.CONVEX_SITE_URL || 'http://localhost:3000' }}/api/webhooks/n8n/activity",
+        "url": "={{ ($env.CONVEX_SITE_URL || 'http://localhost:3000').replace(/\\/+$/, '') }}/api/webhooks/n8n/activity",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -65,24 +101,24 @@
             },
             {
               "name": "X-LendLoop-Signature",
-              "value": "sha256=automated_workflow_signature"
+              "value": "={{ $input.first().json.signature }}"
             },
             {
               "name": "X-LendLoop-Timestamp",
-              "value": "={{ Date.now().toString() }}"
+              "value": "={{ $input.first().json.timestamp }}"
             }
           ]
         },
         "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"idempotencyKey\": \"{{ $input.first().json.idempotencyKey }}\",\n  \"requestId\": \"{{ $input.first().json.requestId }}\",\n  \"loanId\": \"{{ $input.first().json.loanId }}\",\n  \"eventType\": \"loan.overdue\",\n  \"recipientUserId\": \"{{ $input.first().json.borrowerUserId }}\",\n  \"result\": \"sent\",\n  \"summary\": \"{{ $input.first().json.summary }}\"\n}",
+        "specifyBody": "string",
+        "body": "={{ $input.first().json.body }}",
         "options": {}
       },
-      "id": "writeback-overdue",
-      "name": "Writeback Overdue Activity",
+      "id": "convex-overdue-writeback",
+      "name": "Convex Overdue Writeback",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [920, 300]
+      "position": [1340, 300]
     }
   ],
   "connections": {
@@ -90,40 +126,69 @@
       "main": [
         [
           {
-            "node": "Normalize Overdue Payload",
+            "node": "Verify HMAC & Extract Overdue Data",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Daily Overdue Scan Cron": {
+    "Verify HMAC & Extract Overdue Data": {
       "main": [
         [
           {
-            "node": "Normalize Overdue Payload",
+            "node": "Borrower Email Available?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Normalize Overdue Payload": {
+    "Borrower Email Available?": {
       "main": [
         [
           {
-            "node": "Format Overdue Notice",
+            "node": "Send Overdue Reminder Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sign Failure Write-Back",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format Overdue Notice": {
+    "Send Overdue Reminder Email": {
       "main": [
         [
           {
-            "node": "Writeback Overdue Activity",
+            "node": "Sign Success Write-Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Success Write-Back": {
+      "main": [
+        [
+          {
+            "node": "Convex Overdue Writeback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Failure Write-Back": {
+      "main": [
+        [
+          {
+            "node": "Convex Overdue Writeback",
             "type": "main",
             "index": 0
           }

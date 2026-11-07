@@ -50,6 +50,7 @@ export const outboxEventTypeValidator = v.union(
   v.literal("borrow_request.declined"),
   v.literal("loan.created"),
   v.literal("loan.returned"),
+  v.literal("loan.overdue"),
   // Backward-compatible aliases
   v.literal("request.created"),
   v.literal("request.approved"),
@@ -68,6 +69,7 @@ export default defineSchema({
   users: defineTable({
     clerkUserId: v.string(),
     displayName: v.string(),
+    email: v.optional(v.string()),
     role: roleValidator,
     isTrustedLender: v.boolean(),
     createdAt: v.number(),
@@ -129,6 +131,8 @@ export default defineSchema({
     status: outboxStatusValidator,
     attempts: v.number(),
     nextRetryAt: v.number(),
+    processingStartedAt: v.optional(v.number()),
+    claimToken: v.optional(v.string()),
     lastError: v.optional(v.string()),
     createdAt: v.number(),
   })
@@ -145,5 +149,6 @@ export default defineSchema({
     result: v.union(v.literal("sent"), v.literal("failed")),
     summary: v.string(),
     createdAt: v.number(),
+    updatedAt: v.optional(v.number()),
   }).index("by_idempotency_key", ["idempotencyKey"]),
 });

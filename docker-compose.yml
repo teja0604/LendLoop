@@ -14,6 +14,14 @@ services:
       - N8N_DEFAULT_BINARY_DATA_MODE=default
       - N8N_METRICS=true
       - N8N_LOG_LEVEL=info
+      - NODE_FUNCTION_ALLOW_BUILTIN=crypto
+      - CONVEX_SITE_URL=${CONVEX_SITE_URL:-http://localhost:3000}
+      - N8N_WEBHOOK_HMAC_SECRET=${N8N_WEBHOOK_HMAC_SECRET:-dev_hmac_secret_for_local_n8n}
+      - SMTP_HOST=${SMTP_HOST:-smtp.example.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-notifications@lendloop.org}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-smtp_password}
+      - SMTP_SENDER_EMAIL=${SMTP_SENDER_EMAIL:-notifications@lendloop.org}
     volumes:
       - n8n_data:/home/node/.n8n
 

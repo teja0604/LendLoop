@@ -38,10 +38,19 @@ export const storeUser = mutation({
       identity.email?.split("@")[0] ||
       "Neighbor";
 
+    const email = identity.email || undefined;
+
     if (existingUser !== null) {
-      // If display name changed in Clerk, sync it safely
+      // If display name or email changed in Clerk, sync it safely
+      const patchUpdates: { displayName?: string; email?: string } = {};
       if (existingUser.displayName !== displayName) {
-        await ctx.db.patch(existingUser._id, { displayName });
+        patchUpdates.displayName = displayName;
+      }
+      if (email && existingUser.email !== email) {
+        patchUpdates.email = email;
+      }
+      if (Object.keys(patchUpdates).length > 0) {
+        await ctx.db.patch(existingUser._id, patchUpdates);
         return await ctx.db.get(existingUser._id);
       }
       return existingUser;
@@ -51,6 +60,7 @@ export const storeUser = mutation({
     const newUserId = await ctx.db.insert("users", {
       clerkUserId: identity.subject,
       displayName,
+      email,
       role: "user",
       isTrustedLender: false,
       createdAt: Date.now(),

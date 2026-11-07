@@ -16,12 +16,12 @@ crons.interval(
 
 /**
  * Periodically scans for active overdue loans (Workflow D)
- * and records daily idempotent reminders in automationActivity.
+ * and reliably queues outbox events for n8n notification dispatch.
  */
 crons.interval(
   "scan-overdue-loans",
   { hours: 12 },
-  internal.outbox.scanOverdueLoansAndRemind,
+  internal.outbox.scanOverdueLoansAndQueueOutbox,
   {}
 );
 

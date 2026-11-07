@@ -6,6 +6,15 @@ import { verifyWebhookSignature } from "./webhookSecurity";
 
 const http = httpRouter();
 
+const ALLOWED_ACTIVITY_EVENT_TYPES = new Set([
+  "borrow_request.created",
+  "borrow_request.approved",
+  "borrow_request.declined",
+  "loan.created",
+  "loan.returned",
+  "loan.overdue",
+]);
+
 /**
  * SECURE INBOUND WEBHOOK ENDPOINT
  * Allows authenticated n8n workflows to write back notification execution outcomes
@@ -15,8 +24,10 @@ const http = httpRouter();
  * 1. Requires valid HMAC-SHA256 signature in X-LendLoop-Signature
  * 2. Requires fresh timestamp in X-LendLoop-Timestamp (within 5 minutes)
  * 3. Constant-time signature verification
- * 4. Rejects malformed bodies or unapproved result codes
- * 5. Guarantees idempotency via `automationActivity.idempotencyKey`
+ * 4. Validates event types against strict allowlist
+ * 5. Validates all document IDs and relationships against real database entities
+ * 6. Enforces length and format constraints on keys and summaries
+ * 7. Guarantees idempotency and safe retry updating via `recordActivityInternal`
  */
 http.route({
   path: "/api/webhooks/n8n/activity",
@@ -39,7 +50,7 @@ http.route({
       );
     }
 
-    // Verify HMAC-SHA256 signature and timestamp tolerance
+    // 1. Verify HMAC-SHA256 signature and timestamp tolerance
     const verification = await verifyWebhookSignature({
       payload: rawBody,
       signatureHeader,
@@ -60,7 +71,7 @@ http.route({
       );
     }
 
-    // Parse and validate JSON payload
+    // 2. Parse and validate JSON payload
     let body: {
       idempotencyKey?: unknown;
       requestId?: unknown;
@@ -92,45 +103,84 @@ http.route({
       summary,
     } = body;
 
-    if (!idempotencyKey || typeof idempotencyKey !== "string") {
+    // 3. Validate idempotencyKey
+    if (
+      !idempotencyKey ||
+      typeof idempotencyKey !== "string" ||
+      idempotencyKey.trim().length < 5 ||
+      idempotencyKey.length > 256
+    ) {
       return new Response(
-        JSON.stringify({ error: "Bad Request: Missing or invalid 'idempotencyKey'." }),
+        JSON.stringify({
+          error: "Bad Request: 'idempotencyKey' must be a non-empty string between 5 and 256 characters.",
+        }),
         { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
 
-    if (!eventType || typeof eventType !== "string") {
+    // 4. Validate eventType against allowlist
+    if (!eventType || typeof eventType !== "string" || !ALLOWED_ACTIVITY_EVENT_TYPES.has(eventType)) {
       return new Response(
-        JSON.stringify({ error: "Bad Request: Missing or invalid 'eventType'." }),
+        JSON.stringify({
+          error: `Bad Request: Invalid or unsupported eventType '${eventType}'. Allowed types: ${Array.from(ALLOWED_ACTIVITY_EVENT_TYPES).join(", ")}.`,
+        }),
         { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
 
+    // 5. Validate result
     if (result !== "sent" && result !== "failed") {
       return new Response(
-        JSON.stringify({ error: "Bad Request: 'result' must be 'sent' or 'failed'." }),
+        JSON.stringify({ error: "Bad Request: 'result' must be either 'sent' or 'failed'." }),
         { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
 
-    if (!summary || typeof summary !== "string") {
+    // 6. Validate summary
+    if (
+      !summary ||
+      typeof summary !== "string" ||
+      summary.trim().length === 0 ||
+      summary.length > 1000
+    ) {
       return new Response(
-        JSON.stringify({ error: "Bad Request: Missing or invalid 'summary'." }),
+        JSON.stringify({
+          error: "Bad Request: 'summary' must be a non-empty string under 1000 characters.",
+        }),
         { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
 
-    // Write back outcome to automationActivity idempotently
+    const typedRequestId = requestId ? (requestId as Id<"borrowRequests">) : undefined;
+    const typedLoanId = loanId ? (loanId as Id<"loans">) : undefined;
+    const typedRecipientId = recipientUserId ? (recipientUserId as Id<"users">) : undefined;
+
+    // 7. Validate entity references and structural relationships in database
+    const validation = await ctx.runQuery(internal.outbox.validateActivityEntities, {
+      requestId: typedRequestId,
+      loanId: typedLoanId,
+      recipientUserId: typedRecipientId,
+      eventType,
+    });
+
+    if (!validation.valid) {
+      return new Response(
+        JSON.stringify({ error: `Bad Request: ${validation.error}` }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // 8. Write back outcome to automationActivity idempotently
     const recordResult = await ctx.runMutation(
       internal.outbox.recordActivityInternal,
       {
-        idempotencyKey: idempotencyKey as string,
-        requestId: (requestId ? (requestId as Id<"borrowRequests">) : undefined),
-        loanId: (loanId ? (loanId as Id<"loans">) : undefined),
-        eventType: eventType as string,
-        recipientUserId: (recipientUserId ? (recipientUserId as Id<"users">) : undefined),
-        result: result as "sent" | "failed",
-        summary: summary as string,
+        idempotencyKey: idempotencyKey.trim(),
+        requestId: typedRequestId,
+        loanId: typedLoanId,
+        eventType,
+        recipientUserId: typedRecipientId,
+        result,
+        summary: summary.trim(),
       }
     );
 

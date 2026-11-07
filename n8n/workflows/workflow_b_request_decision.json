@@ -12,15 +12,15 @@
       "name": "Webhook: borrow_request decision",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [220, 300],
+      "position": [200, 300],
       "webhookId": "lendloop-request-decision"
     },
     {
       "parameters": {
-        "jsCode": "// Verify and route decision event\nconst body = $input.first().json.body;\nconst eventType = body.eventType;\nconst isApproved = eventType === 'borrow_request.approved';\nconst isDeclined = eventType === 'borrow_request.declined';\n\nif (!isApproved && !isDeclined) {\n  throw new Error(`Invalid decision event type: ${eventType}`);\n}\n\nreturn {\n  eventType,\n  decision: isApproved ? 'approved' : 'declined',\n  eventId: body.eventId,\n  requestId: body.data.requestId,\n  loanId: body.data.loanId || null,\n  toolName: body.data.tool ? body.data.tool.name : 'Requested Tool',\n  borrowerName: body.data.borrower ? body.data.borrower.displayName : 'Borrower',\n  borrowerUserId: body.data.borrower ? body.data.borrower._id : null,\n  lenderName: body.data.lender ? body.data.lender.displayName : 'Lender',\n  startDate: body.data.startDate,\n  endDate: body.data.endDate\n};"
+        "jsCode": "const crypto = require('crypto');\n\nconst headers = $input.first().json.headers || {};\nconst rawBody = $input.first().json.rawBody || JSON.stringify($input.first().json.body);\nconst body = $input.first().json.body;\n\nconst signatureHeader = headers['x-lendloop-signature'] || headers['X-LendLoop-Signature'];\nconst timestampHeader = headers['x-lendloop-timestamp'] || headers['X-LendLoop-Timestamp'];\nconst secret = $env.N8N_WEBHOOK_HMAC_SECRET;\n\nif (!secret) {\n  throw new Error('N8N_WEBHOOK_HMAC_SECRET environment variable is missing.');\n}\n\nif (!signatureHeader || !timestampHeader) {\n  throw new Error('Unauthorized: Missing signature or timestamp header.');\n}\n\nconst timestamp = parseInt(timestampHeader, 10);\nconst now = Date.now();\nif (isNaN(timestamp) || Math.abs(now - timestamp) > 300000) {\n  throw new Error('Unauthorized: Request timestamp expired or outside 5-minute tolerance.');\n}\n\nconst expectedSignature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\nconst receivedHex = signatureHeader.replace(/^sha256=/, '').trim();\n\nif (receivedHex.length !== expectedSignature.length || !crypto.timingSafeEqual(Buffer.from(receivedHex, 'hex'), Buffer.from(expectedSignature, 'hex'))) {\n  throw new Error('Unauthorized: HMAC signature mismatch. Payload may have been tampered with.');\n}\n\nconst eventType = body.eventType;\nconst isApproved = eventType === 'borrow_request.approved' || eventType === 'loan.created';\nconst isDeclined = eventType === 'borrow_request.declined';\n\nif (!isApproved && !isDeclined) {\n  throw new Error(`Routing Error: Invalid decision event type ${eventType} sent to Workflow B.`);\n}\n\nconst borrowerEmail = body.data.borrower ? body.data.borrower.email : null;\nconst borrowerName = body.data.borrower ? body.data.borrower.displayName : 'Borrower';\nconst lenderName = body.data.lender ? body.data.lender.displayName : 'Lender';\nconst toolName = body.data.tool ? body.data.tool.name : 'Requested Tool';\n\nconst subject = isApproved\n  ? `Great News! Your request for ${toolName} was approved`\n  : `Update on your borrow request for ${toolName}`;\n\nconst emailBody = isApproved\n  ? `Hi ${borrowerName},\\n\\n${lenderName} has approved your borrow request for \"${toolName}\" from ${body.data.startDate} to ${body.data.endDate}.\\n\\nPlease coordinate pickup details with your neighbor in LendLoop.`\n  : `Hi ${borrowerName},\\n\\n${lenderName} was unable to fulfill your borrow request for \"${toolName}\" for the requested dates (${body.data.startDate} to ${body.data.endDate}).\\n\\nCheck LendLoop for other available tools in your neighborhood.`;\n\nreturn {\n  eventId: body.eventId,\n  requestId: body.data.requestId,\n  loanId: body.data.loanId || null,\n  eventType,\n  decision: isApproved ? 'approved' : 'declined',\n  toolName,\n  borrowerName,\n  borrowerEmail,\n  recipientUserId: body.data.borrower ? body.data.borrower._id : null,\n  subject,\n  emailBody,\n  idempotencyKey: `notif:${isApproved ? 'req_approved' : 'req_declined'}:${body.data.requestId}`\n};"
       },
-      "id": "parse-decision",
-      "name": "Parse Decision Event",
+      "id": "verify-decision-hmac",
+      "name": "Verify HMAC & Parse Decision",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [440, 300]
@@ -35,48 +35,63 @@
           },
           "conditions": [
             {
-              "id": "check-approved",
-              "leftValue": "={{ $input.first().json.decision }}",
-              "rightValue": "approved",
+              "id": "check-borrower-email",
+              "leftValue": "={{ $input.first().json.borrowerEmail || '' }}",
+              "rightValue": "",
               "operator": {
                 "type": "string",
-                "operation": "equals"
+                "operation": "notEquals"
               }
             }
           ],
           "combinator": "and"
         }
       },
-      "id": "if-approved",
-      "name": "Is Request Approved?",
+      "id": "check-borrower-email-present",
+      "name": "Borrower Email Available?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [660, 300]
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first().json;\nreturn {\n  ...item,\n  subject: `Great News! Your request for ${item.toolName} was approved`,\n  body: `Hi ${item.borrowerName},\\n\\n${item.lenderName} has approved your borrow request for ${item.toolName}. A new loan has been scheduled from ${item.startDate} to ${item.endDate}.\\n\\nPlease coordinate pickup details with your neighbor.`,\n  idempotencyKey: `notif:req_approved:${item.requestId}`,\n  summary: `Notified borrower ${item.borrowerName} of request approval for ${item.toolName}`\n};"
+        "fromEmail": "={{ $env.SMTP_SENDER_EMAIL || 'notifications@lendloop.org' }}",
+        "toEmail": "={{ $input.first().json.borrowerEmail }}",
+        "subject": "={{ $input.first().json.subject }}",
+        "text": "={{ $input.first().json.emailBody }}",
+        "options": {}
       },
-      "id": "format-approval",
-      "name": "Format Approval Notice",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [880, 200]
+      "id": "send-decision-email",
+      "name": "Send Decision Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [880, 220],
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first().json;\nreturn {\n  ...item,\n  subject: `Update on your request for ${item.toolName}`,\n  body: `Hi ${item.borrowerName},\\n\\n${item.lenderName} was unable to fulfill your borrow request for ${item.toolName} for ${item.startDate} to ${item.endDate}.\\n\\nCheck LendLoop for other available tools in your neighborhood.`,\n  idempotencyKey: `notif:req_declined:${item.requestId}`,\n  summary: `Notified borrower ${item.borrowerName} that request was declined for ${item.toolName}`\n};"
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.first().json;\nconst secret = $env.N8N_WEBHOOK_HMAC_SECRET;\nconst timestamp = Date.now().toString();\n\nconst writeback = {\n  idempotencyKey: item.idempotencyKey,\n  requestId: item.requestId,\n  loanId: item.loanId || undefined,\n  eventType: item.eventType,\n  recipientUserId: item.recipientUserId,\n  result: 'sent',\n  summary: `Notification email sent to borrower (${item.borrowerEmail}) for decision '${item.decision}' on request ${item.requestId}`\n};\n\nconst rawBody = JSON.stringify(writeback);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn {\n  signature: `sha256=${signature}`,\n  timestamp,\n  body: rawBody\n};"
       },
-      "id": "format-decline",
-      "name": "Format Decline Notice",
+      "id": "sign-decision-success",
+      "name": "Sign Success Write-Back",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [880, 400]
+      "position": [1100, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.first().json;\nconst secret = $env.N8N_WEBHOOK_HMAC_SECRET;\nconst timestamp = Date.now().toString();\n\nconst writeback = {\n  idempotencyKey: item.idempotencyKey,\n  requestId: item.requestId,\n  loanId: item.loanId || undefined,\n  eventType: item.eventType,\n  recipientUserId: item.recipientUserId,\n  result: 'failed',\n  summary: item.borrowerEmail ? 'SMTP provider delivery failed for decision notice.' : 'Notification skipped: Borrower email address not configured.'\n};\n\nconst rawBody = JSON.stringify(writeback);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn {\n  signature: `sha256=${signature}`,\n  timestamp,\n  body: rawBody\n};"
+      },
+      "id": "sign-decision-failure",
+      "name": "Sign Failure Write-Back",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 400]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.CONVEX_SITE_URL || 'http://localhost:3000' }}/api/webhooks/n8n/activity",
+        "url": "={{ ($env.CONVEX_SITE_URL || 'http://localhost:3000').replace(/\\/+$/, '') }}/api/webhooks/n8n/activity",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -86,24 +101,24 @@
             },
             {
               "name": "X-LendLoop-Signature",
-              "value": "sha256=automated_workflow_signature"
+              "value": "={{ $input.first().json.signature }}"
             },
             {
               "name": "X-LendLoop-Timestamp",
-              "value": "={{ Date.now().toString() }}"
+              "value": "={{ $input.first().json.timestamp }}"
             }
           ]
         },
         "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"idempotencyKey\": \"{{ $input.first().json.idempotencyKey }}\",\n  \"requestId\": \"{{ $input.first().json.requestId }}\",\n  \"loanId\": {{ $input.first().json.loanId ? '\"' + $input.first().json.loanId + '\"' : 'null' }},\n  \"eventType\": \"{{ $input.first().json.eventType }}\",\n  \"recipientUserId\": \"{{ $input.first().json.borrowerUserId }}\",\n  \"result\": \"sent\",\n  \"summary\": \"{{ $input.first().json.summary }}\"\n}",
+        "specifyBody": "string",
+        "body": "={{ $input.first().json.body }}",
         "options": {}
       },
-      "id": "writeback-decision",
-      "name": "Writeback Decision Activity",
+      "id": "convex-decision-writeback",
+      "name": "Convex Decision Writeback",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1120, 300]
+      "position": [1340, 300]
     }
   ],
   "connections": {
@@ -111,58 +126,69 @@
       "main": [
         [
           {
-            "node": "Parse Decision Event",
+            "node": "Verify HMAC & Parse Decision",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Parse Decision Event": {
+    "Verify HMAC & Parse Decision": {
       "main": [
         [
           {
-            "node": "Is Request Approved?",
+            "node": "Borrower Email Available?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Is Request Approved?": {
+    "Borrower Email Available?": {
       "main": [
         [
           {
-            "node": "Format Approval Notice",
+            "node": "Send Decision Email",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Format Decline Notice",
+            "node": "Sign Failure Write-Back",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format Approval Notice": {
+    "Send Decision Email": {
       "main": [
         [
           {
-            "node": "Writeback Decision Activity",
+            "node": "Sign Success Write-Back",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Format Decline Notice": {
+    "Sign Success Write-Back": {
       "main": [
         [
           {
-            "node": "Writeback Decision Activity",
+            "node": "Convex Decision Writeback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Failure Write-Back": {
+      "main": [
+        [
+          {
+            "node": "Convex Decision Writeback",
             "type": "main",
             "index": 0
           }
