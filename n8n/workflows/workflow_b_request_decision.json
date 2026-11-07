@@ -1,0 +1,176 @@
+{
+  "name": "LendLoop - Workflow B: Request Decision",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-request-decision",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: borrow_request decision",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "lendloop-request-decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verify and route decision event\nconst body = $input.first().json.body;\nconst eventType = body.eventType;\nconst isApproved = eventType === 'borrow_request.approved';\nconst isDeclined = eventType === 'borrow_request.declined';\n\nif (!isApproved && !isDeclined) {\n  throw new Error(`Invalid decision event type: ${eventType}`);\n}\n\nreturn {\n  eventType,\n  decision: isApproved ? 'approved' : 'declined',\n  eventId: body.eventId,\n  requestId: body.data.requestId,\n  loanId: body.data.loanId || null,\n  toolName: body.data.tool ? body.data.tool.name : 'Requested Tool',\n  borrowerName: body.data.borrower ? body.data.borrower.displayName : 'Borrower',\n  borrowerUserId: body.data.borrower ? body.data.borrower._id : null,\n  lenderName: body.data.lender ? body.data.lender.displayName : 'Lender',\n  startDate: body.data.startDate,\n  endDate: body.data.endDate\n};"
+      },
+      "id": "parse-decision",
+      "name": "Parse Decision Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-approved",
+              "leftValue": "={{ $input.first().json.decision }}",
+              "rightValue": "approved",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-approved",
+      "name": "Is Request Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nreturn {\n  ...item,\n  subject: `Great News! Your request for ${item.toolName} was approved`,\n  body: `Hi ${item.borrowerName},\\n\\n${item.lenderName} has approved your borrow request for ${item.toolName}. A new loan has been scheduled from ${item.startDate} to ${item.endDate}.\\n\\nPlease coordinate pickup details with your neighbor.`,\n  idempotencyKey: `notif:req_approved:${item.requestId}`,\n  summary: `Notified borrower ${item.borrowerName} of request approval for ${item.toolName}`\n};"
+      },
+      "id": "format-approval",
+      "name": "Format Approval Notice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nreturn {\n  ...item,\n  subject: `Update on your request for ${item.toolName}`,\n  body: `Hi ${item.borrowerName},\\n\\n${item.lenderName} was unable to fulfill your borrow request for ${item.toolName} for ${item.startDate} to ${item.endDate}.\\n\\nCheck LendLoop for other available tools in your neighborhood.`,\n  idempotencyKey: `notif:req_declined:${item.requestId}`,\n  summary: `Notified borrower ${item.borrowerName} that request was declined for ${item.toolName}`\n};"
+      },
+      "id": "format-decline",
+      "name": "Format Decline Notice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONVEX_SITE_URL || 'http://localhost:3000' }}/api/webhooks/n8n/activity",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "sha256=automated_workflow_signature"
+            },
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ Date.now().toString() }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"idempotencyKey\": \"{{ $input.first().json.idempotencyKey }}\",\n  \"requestId\": \"{{ $input.first().json.requestId }}\",\n  \"loanId\": {{ $input.first().json.loanId ? '\"' + $input.first().json.loanId + '\"' : 'null' }},\n  \"eventType\": \"{{ $input.first().json.eventType }}\",\n  \"recipientUserId\": \"{{ $input.first().json.borrowerUserId }}\",\n  \"result\": \"sent\",\n  \"summary\": \"{{ $input.first().json.summary }}\"\n}",
+        "options": {}
+      },
+      "id": "writeback-decision",
+      "name": "Writeback Decision Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: borrow_request decision": {
+      "main": [
+        [
+          {
+            "node": "Parse Decision Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Decision Event": {
+      "main": [
+        [
+          {
+            "node": "Is Request Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Request Approved?": {
+      "main": [
+        [
+          {
+            "node": "Format Approval Notice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Decline Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Approval Notice": {
+      "main": [
+        [
+          {
+            "node": "Writeback Decision Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Decline Notice": {
+      "main": [
+        [
+          {
+            "node": "Writeback Decision Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

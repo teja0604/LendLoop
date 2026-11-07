@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node tests/overdue.test.mjs && tsx tests/admin.test.ts"
+    "test": "node tests/overdue.test.mjs && tsx tests/admin.test.ts && tsx tests/automation.test.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.39.8",

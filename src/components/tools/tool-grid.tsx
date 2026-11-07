@@ -35,7 +35,9 @@ export function ToolGrid({
     return selectedCategory === "All" ? {} : { category: selectedCategory };
   }, [selectedCategory]);
 
-  const publicTools = useQuery(api.tools.getPublicAvailableTools, queryArgs);
+  const publicTools = useQuery(api.tools.getPublicAvailableTools, queryArgs) as
+    | PublicToolItem[]
+    | undefined;
 
   const addToast = (toast: Omit<ToastMessage, "id">) => {
     const id = Math.random().toString(36).substring(2, 9);

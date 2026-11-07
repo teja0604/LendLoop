@@ -11,10 +11,14 @@
 import type * as admin from "../admin.js";
 import type * as authHelpers from "../authHelpers.js";
 import type * as borrowRequests from "../borrowRequests.js";
+import type * as crons from "../crons.js";
 import type * as dateUtils from "../dateUtils.js";
+import type * as http from "../http.js";
 import type * as loans from "../loans.js";
+import type * as outbox from "../outbox.js";
 import type * as tools from "../tools.js";
 import type * as users from "../users.js";
+import type * as webhookSecurity from "../webhookSecurity.js";
 
 import type {
   ApiFromModules,
@@ -26,10 +30,14 @@ declare const fullApi: ApiFromModules<{
   admin: typeof admin;
   authHelpers: typeof authHelpers;
   borrowRequests: typeof borrowRequests;
+  crons: typeof crons;
   dateUtils: typeof dateUtils;
+  http: typeof http;
   loans: typeof loans;
+  outbox: typeof outbox;
   tools: typeof tools;
   users: typeof users;
+  webhookSecurity: typeof webhookSecurity;
 }>;
 
 /**

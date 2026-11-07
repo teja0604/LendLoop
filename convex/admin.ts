@@ -398,3 +398,51 @@ export const reactivateToolAdmin = mutation({
   },
 });
 
+/**
+ * ADMIN: GET AUTOMATION & OUTBOX OVERVIEW
+ * Requires authenticated administrator.
+ * Exposes delivery metrics across automation outbox and activity write-backs.
+ * Never exposes secrets, webhook URLs, or raw headers.
+ */
+export const getAutomationOverview = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+
+    const [outboxEvents, activities] = await Promise.all([
+      ctx.db.query("automationOutbox").collect(),
+      ctx.db.query("automationActivity").order("desc").take(25),
+    ]);
+
+    const counts = {
+      pending: outboxEvents.filter((e) => e.status === "pending").length,
+      processing: outboxEvents.filter((e) => e.status === "processing").length,
+      sent: outboxEvents.filter((e) => e.status === "sent").length,
+      failed: outboxEvents.filter((e) => e.status === "failed").length,
+      total: outboxEvents.length,
+    };
+
+    return {
+      counts,
+      recentActivities: activities.map((a) => ({
+        _id: a._id,
+        idempotencyKey: a.idempotencyKey,
+        eventType: a.eventType,
+        result: a.result,
+        summary: a.summary,
+        createdAt: a.createdAt,
+      })),
+      recentOutbox: outboxEvents.slice(-10).reverse().map((e) => ({
+        _id: e._id,
+        eventId: e.eventId,
+        eventType: e.eventType,
+        status: e.status,
+        attempts: e.attempts,
+        lastError: e.lastError || null,
+        createdAt: e.createdAt,
+      })),
+    };
+  },
+});
+
+

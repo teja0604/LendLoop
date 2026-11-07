@@ -1,0 +1,137 @@
+{
+  "name": "LendLoop - Workflow D: Overdue Loan Reminder",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-overdue-reminder",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: loan.overdue",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 200],
+      "webhookId": "lendloop-overdue-reminder"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Daily Overdue Scan Cron",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract overdue loan details\nconst input = $input.first().json;\nconst isFromWebhook = Boolean(input.body && input.body.eventType);\n\nif (isFromWebhook) {\n  const body = input.body;\n  return {\n    loanId: body.data.loanId,\n    requestId: body.data.requestId,\n    toolName: body.data.tool ? body.data.tool.name : 'Borrowed Tool',\n    borrowerName: body.data.borrower ? body.data.borrower.displayName : 'Borrower',\n    borrowerUserId: body.data.borrower ? body.data.borrower._id : null,\n    dueDate: body.data.loan ? body.data.loan.dueDate : 'Past due',\n    today: new Date().toISOString().slice(0, 10)\n  };\n}\n\n// Triggered by schedule\nreturn {\n  scheduledScan: true,\n  today: new Date().toISOString().slice(0, 10)\n};"
+      },
+      "id": "normalize-overdue",
+      "name": "Normalize Overdue Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nif (item.scheduledScan) {\n  return {\n    skipWriteback: true,\n    summary: `Daily scheduled scan triggered for ${item.today}`\n  };\n}\n\nreturn {\n  ...item,\n  subject: `Urgent Reminder: Tool Return Overdue (${item.toolName})`,\n  body: `Hello ${item.borrowerName},\\n\\nThis is a friendly reminder from LendLoop that your loan for ${item.toolName} was due on ${item.dueDate}.\\n\\nPlease return the tool promptly to your neighbor or communicate with them if you need an extension.`,\n  idempotencyKey: `overdue:${item.loanId}:${item.today}`,\n  summary: `Automated overdue reminder sent to ${item.borrowerName} for loan ${item.loanId} (due ${item.dueDate})`\n};"
+      },
+      "id": "format-overdue-reminder",
+      "name": "Format Overdue Notice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONVEX_SITE_URL || 'http://localhost:3000' }}/api/webhooks/n8n/activity",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "sha256=automated_workflow_signature"
+            },
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ Date.now().toString() }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"idempotencyKey\": \"{{ $input.first().json.idempotencyKey }}\",\n  \"requestId\": \"{{ $input.first().json.requestId }}\",\n  \"loanId\": \"{{ $input.first().json.loanId }}\",\n  \"eventType\": \"loan.overdue\",\n  \"recipientUserId\": \"{{ $input.first().json.borrowerUserId }}\",\n  \"result\": \"sent\",\n  \"summary\": \"{{ $input.first().json.summary }}\"\n}",
+        "options": {}
+      },
+      "id": "writeback-overdue",
+      "name": "Writeback Overdue Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: loan.overdue": {
+      "main": [
+        [
+          {
+            "node": "Normalize Overdue Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Overdue Scan Cron": {
+      "main": [
+        [
+          {
+            "node": "Normalize Overdue Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Overdue Payload": {
+      "main": [
+        [
+          {
+            "node": "Format Overdue Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Overdue Notice": {
+      "main": [
+        [
+          {
+            "node": "Writeback Overdue Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

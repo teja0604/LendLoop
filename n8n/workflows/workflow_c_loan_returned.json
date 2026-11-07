@@ -1,0 +1,109 @@
+{
+  "name": "LendLoop - Workflow C: Loan Return Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-loan-returned",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: loan.returned",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "lendloop-loan-returned"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract return event payload\nconst body = $input.first().json.body;\n\nif (body.eventType !== 'loan.returned') {\n  throw new Error(`Unexpected event type: ${body.eventType}`);\n}\n\nreturn {\n  eventId: body.eventId,\n  requestId: body.data.requestId,\n  loanId: body.data.loanId,\n  toolName: body.data.tool ? body.data.tool.name : 'Tool',\n  borrowerName: body.data.borrower ? body.data.borrower.displayName : 'Borrower',\n  borrowerUserId: body.data.borrower ? body.data.borrower._id : null,\n  lenderName: body.data.lender ? body.data.lender.displayName : 'Lender',\n  lenderUserId: body.data.lender ? body.data.lender._id : null,\n  returnedAt: Date.now()\n};"
+      },
+      "id": "extract-return-data",
+      "name": "Extract Return Event Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format return thank you & confirmation notifications\nconst item = $input.first().json;\n\nreturn {\n  ...item,\n  borrowerSubject: `Tool Return Confirmation: ${item.toolName}`,\n  borrowerMessage: `Hi ${item.borrowerName},\\n\\nThank you for returning ${item.toolName} to ${item.lenderName}! We hope it was helpful for your project.`,\n  lenderSubject: `Tool Returned: ${item.toolName}`,\n  lenderMessage: `Hi ${item.lenderName},\\n\\n${item.borrowerName} has returned your ${item.toolName}. Thank you for lending to your neighborhood!`,\n  idempotencyKey: `notif:loan_returned:${item.loanId}`,\n  summary: `Recorded tool return and sent thank-you notices for loan ${item.loanId} (${item.toolName})`\n};"
+      },
+      "id": "format-return-notice",
+      "name": "Format Return Notifications",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONVEX_SITE_URL || 'http://localhost:3000' }}/api/webhooks/n8n/activity",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "sha256=automated_workflow_signature"
+            },
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ Date.now().toString() }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"idempotencyKey\": \"{{ $input.first().json.idempotencyKey }}\",\n  \"requestId\": \"{{ $input.first().json.requestId }}\",\n  \"loanId\": \"{{ $input.first().json.loanId }}\",\n  \"eventType\": \"loan.returned\",\n  \"recipientUserId\": \"{{ $input.first().json.borrowerUserId }}\",\n  \"result\": \"sent\",\n  \"summary\": \"{{ $input.first().json.summary }}\"\n}",
+        "options": {}
+      },
+      "id": "writeback-return",
+      "name": "Writeback Return Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: loan.returned": {
+      "main": [
+        [
+          {
+            "node": "Extract Return Event Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Return Event Data": {
+      "main": [
+        [
+          {
+            "node": "Format Return Notifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Return Notifications": {
+      "main": [
+        [
+          {
+            "node": "Writeback Return Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "name": "LendLoop - Workflow A: Request Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-request-created",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: borrow_request.created",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "lendloop-request-created"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verify HMAC signature and extract payload\nconst headers = $input.first().json.headers;\nconst body = $input.first().json.body;\n\nconst signature = headers['x-lendloop-signature'] || headers['X-LendLoop-Signature'];\nconst timestamp = headers['x-lendloop-timestamp'] || headers['X-LendLoop-Timestamp'];\nconst eventType = body.eventType;\n\nif (eventType !== 'borrow_request.created') {\n  throw new Error(`Unexpected event type: ${eventType}`);\n}\n\nreturn {\n  eventId: body.eventId,\n  requestId: body.data.requestId,\n  toolName: body.data.tool ? body.data.tool.name : 'Unknown Tool',\n  toolCategory: body.data.tool ? body.data.tool.category : 'General',\n  borrowerName: body.data.borrower ? body.data.borrower.displayName : 'Neighbor',\n  lenderName: body.data.lender ? body.data.lender.displayName : 'Tool Owner',\n  startDate: body.data.startDate,\n  endDate: body.data.endDate,\n  lenderUserId: body.data.lender ? body.data.lender._id : null,\n  timestamp: Date.now()\n};"
+      },
+      "id": "verify-and-extract",
+      "name": "Verify & Extract Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format notification for the tool owner\nconst item = $input.first().json;\n\nconst notification = {\n  recipient: item.lenderName,\n  subject: `New Borrow Request: ${item.toolName}`,\n  body: `Hello ${item.lenderName},\\n\\n${item.borrowerName} has requested to borrow your ${item.toolName} from ${item.startDate} to ${item.endDate}.\\n\\nPlease review and respond to this request in your LendLoop dashboard.`, \n  idempotencyKey: `notif:req_created:${item.requestId}`,\n  summary: `Notified lender ${item.lenderName} of new request for ${item.toolName} by ${item.borrowerName}`,\n  ...item\n};\n\nreturn notification;"
+      },
+      "id": "format-notification",
+      "name": "Format Lender Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONVEX_SITE_URL || 'http://localhost:3000' }}/api/webhooks/n8n/activity",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $input.first().json.signature || 'sha256=automated_workflow_signature' }}"
+            },
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ Date.now().toString() }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"idempotencyKey\": \"{{ $input.first().json.idempotencyKey }}\",\n  \"requestId\": \"{{ $input.first().json.requestId }}\",\n  \"eventType\": \"borrow_request.created\",\n  \"recipientUserId\": \"{{ $input.first().json.lenderUserId }}\",\n  \"result\": \"sent\",\n  \"summary\": \"{{ $input.first().json.summary }}\"\n}",
+        "options": {}
+      },
+      "id": "convex-writeback",
+      "name": "Convex Activity Writeback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: borrow_request.created": {
+      "main": [
+        [
+          {
+            "node": "Verify & Extract Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify & Extract Event": {
+      "main": [
+        [
+          {
+            "node": "Format Lender Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Lender Notification": {
+      "main": [
+        [
+          {
+            "node": "Convex Activity Writeback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

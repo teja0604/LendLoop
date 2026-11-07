@@ -15,7 +15,7 @@ import { Plus, Wrench, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
 export default function MyToolsPage() {
-  const myTools = useQuery(api.tools.getMyTools);
+  const myTools = useQuery(api.tools.getMyTools) as MyToolItem[] | undefined;
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingTool, setEditingTool] = useState<MyToolItem | null>(null);

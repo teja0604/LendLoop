@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import assert from "node:assert/strict";
 import { convexTest } from "convex-test";
 import schema from "../convex/schema";
@@ -63,7 +64,7 @@ async function runRealConvexSecurityTests() {
     assert.equal(res.success, true);
     assert.equal(res.role, "admin");
 
-    const updatedAlice = await t.run(async (ctx) => ctx.db.get(aliceDoc._id));
+    const updatedAlice: any = await t.run(async (ctx) => ctx.db.get(aliceDoc._id));
     assert.equal(updatedAlice?.role, "admin", "Alice must now have 'admin' role in the database");
     console.log("✔ Test 1.1 Passed: First administrator successfully initialized via internal.users.bootstrapAdmin.");
   }
@@ -83,7 +84,7 @@ async function runRealConvexSecurityTests() {
       "Ordinary user must be forbidden from elevating themselves"
     );
 
-    const bobInDb = await t.run(async (ctx) => ctx.db.get(bobDoc._id));
+    const bobInDb: any = await t.run(async (ctx) => ctx.db.get(bobDoc._id));
     assert.equal(bobInDb?.role, "user", "Bob's role must remain 'user'");
     console.log("✔ Test 1.2 Passed: Ordinary user cannot self-promote via bootstrapAdmin.");
   }
@@ -111,7 +112,7 @@ async function runRealConvexSecurityTests() {
     });
     assert.equal(res.success, true);
 
-    const charlieInDb = await t.run(async (ctx) => ctx.db.get(charlieDoc._id));
+    const charlieInDb: any = await t.run(async (ctx) => ctx.db.get(charlieDoc._id));
     assert.equal(charlieInDb?.role, "admin", "Charlie must be promoted to admin by Alice");
     console.log("✔ Test 1.4 Passed: Existing authenticated admin can promote another user.");
 
@@ -133,7 +134,7 @@ async function runRealConvexSecurityTests() {
     assert.equal(res.success, true);
     assert.equal(res.isTrustedLender, true);
 
-    const bobInDb = await t.run(async (ctx) => ctx.db.get(bobDoc._id));
+    const bobInDb: any = await t.run(async (ctx) => ctx.db.get(bobDoc._id));
     assert.equal(bobInDb?.isTrustedLender, true, "Database value for isTrustedLender must be true");
     console.log("✔ Test 2.1 Passed: Administrator successfully granted Trusted Lender status (verified in DB).");
   }
@@ -147,7 +148,7 @@ async function runRealConvexSecurityTests() {
     assert.equal(res.success, true);
     assert.equal(res.isTrustedLender, false);
 
-    const bobInDb = await t.run(async (ctx) => ctx.db.get(bobDoc._id));
+    const bobInDb: any = await t.run(async (ctx) => ctx.db.get(bobDoc._id));
     assert.equal(bobInDb?.isTrustedLender, false, "Database value for isTrustedLender must be false");
     console.log("✔ Test 2.2 Passed: Administrator successfully revoked Trusted Lender status (verified in DB).");
   }
@@ -167,7 +168,7 @@ async function runRealConvexSecurityTests() {
       }
     );
 
-    const bobInDb = await t.run(async (ctx) => ctx.db.get(bobDoc._id));
+    const bobInDb: any = await t.run(async (ctx) => ctx.db.get(bobDoc._id));
     assert.equal(bobInDb?.isTrustedLender, false, "Database value must remain unchanged");
     console.log("✔ Test 2.3 Passed: Ordinary user is rejected when attempting to modify Trusted Lender status.");
   }
@@ -273,7 +274,7 @@ async function runRealConvexSecurityTests() {
     assert.equal(res.success, true);
     assert.equal(res.isActive, false);
 
-    const toolInDb = await t.run(async (ctx) => ctx.db.get(bobToolId));
+    const toolInDb: any = await t.run(async (ctx) => ctx.db.get(bobToolId));
     assert.equal(toolInDb?.isActive, false, "Tool in DB must have isActive = false");
     console.log("✔ Test 4.1 Passed: Administrator soft-deactivates another member's tool (verified in DB).");
   }
@@ -293,7 +294,7 @@ async function runRealConvexSecurityTests() {
       }
     );
 
-    const aliceToolInDb = await t.run(async (ctx) => ctx.db.get(aliceToolId));
+    const aliceToolInDb: any = await t.run(async (ctx) => ctx.db.get(aliceToolId));
     assert.equal(aliceToolInDb?.isActive, true, "Alice's tool must remain active");
     console.log("✔ Test 4.2 Passed: Ordinary user cannot use admin deactivation on another member's tool.");
   }
@@ -322,7 +323,7 @@ async function runRealConvexSecurityTests() {
     assert.equal(res.success, true);
     assert.equal(res.isActive, true);
 
-    const toolInDb = await t.run(async (ctx) => ctx.db.get(bobToolId));
+    const toolInDb: any = await t.run(async (ctx) => ctx.db.get(bobToolId));
     assert.equal(toolInDb?.isActive, true, "Tool in DB must have isActive = true");
     console.log("✔ Test 4.4 Passed: Administrator successfully restored deactivated listing (verified in DB).");
   }
@@ -334,7 +335,7 @@ async function runRealConvexSecurityTests() {
       toolId: aliceToolId,
     });
 
-    const loanInDb = await t.run(async (ctx) => ctx.db.get(loanId));
+    const loanInDb: any = await t.run(async (ctx) => ctx.db.get(loanId));
     assert.ok(loanInDb, "Loan record must not be deleted when tool is deactivated");
     assert.equal(loanInDb?.status, "active", "Loan status must remain intact");
     console.log("✔ Test 4.5 Passed: Tool deactivation preserves historical loan records and integrity.");
@@ -422,7 +423,7 @@ async function runRealConvexSecurityTests() {
     });
     assert.equal(returnRes.success, true);
 
-    const returnedLoan = await t.run(async (ctx) => ctx.db.get(loanId));
+    const returnedLoan: any = await t.run(async (ctx) => ctx.db.get(loanId));
     assert.equal(returnedLoan?.status, "returned");
     assert.ok(returnedLoan?.returnedAt, "returnedAt timestamp must be recorded");
     console.log("✔ Test 6.1 Passed: Real loan marked as returned and verified in database.");

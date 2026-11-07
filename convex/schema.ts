@@ -10,7 +10,7 @@ import { v } from "convex/values";
  * - Tool Condition: "New" | "Excellent" | "Good" | "Fair"
  * - Request Status: "pending" | "approved" | "declined"
  * - Loan Status: "active" | "returned"
- * - Outbox Event Type: "request.created" | "request.approved" | "request.declined"
+ * - Outbox Event Type: "borrow_request.created" | "borrow_request.approved" | "borrow_request.declined" | "loan.created" | "loan.returned" | "request.created" | "request.approved" | "request.declined"
  * - Outbox Status: "pending" | "processing" | "sent" | "failed"
  * - Activity Result: "sent" | "failed"
  */
@@ -45,6 +45,12 @@ export const loanStatusValidator = v.union(
 );
 
 export const outboxEventTypeValidator = v.union(
+  v.literal("borrow_request.created"),
+  v.literal("borrow_request.approved"),
+  v.literal("borrow_request.declined"),
+  v.literal("loan.created"),
+  v.literal("loan.returned"),
+  // Backward-compatible aliases
   v.literal("request.created"),
   v.literal("request.approved"),
   v.literal("request.declined")

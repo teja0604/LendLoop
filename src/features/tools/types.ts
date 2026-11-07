@@ -202,3 +202,30 @@ export interface AdminToolItem {
   hasActiveLoan: boolean;
 }
 
+export interface AdminAutomationOverview {
+  counts: {
+    pending: number;
+    processing: number;
+    sent: number;
+    failed: number;
+    total: number;
+  };
+  recentActivities: {
+    _id: Id<"automationActivity">;
+    idempotencyKey: string;
+    eventType: string;
+    result: "sent" | "failed";
+    summary: string;
+    createdAt: number;
+  }[];
+  recentOutbox: {
+    _id: Id<"automationOutbox">;
+    eventId: string;
+    eventType: string;
+    status: "pending" | "processing" | "sent" | "failed";
+    attempts: number;
+    lastError: string | null;
+    createdAt: number;
+  }[];
+}
+

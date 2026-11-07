@@ -76,6 +76,18 @@ export const createRequest = mutation({
       updatedAt: now,
     });
 
+    // Transactional Outbox: Emit borrow_request.created atomically
+    const eventId = `evt_${now}_${Math.random().toString(36).slice(2, 9)}`;
+    await ctx.db.insert("automationOutbox", {
+      eventId,
+      eventType: "borrow_request.created",
+      requestId,
+      status: "pending",
+      attempts: 0,
+      nextRetryAt: now,
+      createdAt: now,
+    });
+
     return requestId;
   },
 });
@@ -254,6 +266,31 @@ export const approveRequest = mutation({
       updatedAt: now,
     });
 
+    // 3. Transactional Outbox: Emit borrow_request.approved and loan.created atomically
+    const eventIdApproved = `evt_${now}_${Math.random().toString(36).slice(2, 9)}`;
+    await ctx.db.insert("automationOutbox", {
+      eventId: eventIdApproved,
+      eventType: "borrow_request.approved",
+      requestId: request._id,
+      loanId,
+      status: "pending",
+      attempts: 0,
+      nextRetryAt: now,
+      createdAt: now,
+    });
+
+    const eventIdLoan = `evt_${now}_${Math.random().toString(36).slice(2, 9)}_loan`;
+    await ctx.db.insert("automationOutbox", {
+      eventId: eventIdLoan,
+      eventType: "loan.created",
+      requestId: request._id,
+      loanId,
+      status: "pending",
+      attempts: 0,
+      nextRetryAt: now,
+      createdAt: now,
+    });
+
     return {
       success: true,
       loanId,
@@ -298,6 +335,18 @@ export const declineRequest = mutation({
     await ctx.db.patch(request._id, {
       status: "declined",
       updatedAt: now,
+    });
+
+    // Transactional Outbox: Emit borrow_request.declined atomically
+    const eventIdDeclined = `evt_${now}_${Math.random().toString(36).slice(2, 9)}`;
+    await ctx.db.insert("automationOutbox", {
+      eventId: eventIdDeclined,
+      eventType: "borrow_request.declined",
+      requestId: request._id,
+      status: "pending",
+      attempts: 0,
+      nextRetryAt: now,
+      createdAt: now,
     });
 
     return {

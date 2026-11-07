@@ -105,6 +105,19 @@ export const markReturned = mutation({
       returnedAt: now,
     });
 
+    // Transactional Outbox: Emit loan.returned atomically
+    const eventIdReturned = `evt_${now}_${Math.random().toString(36).slice(2, 9)}`;
+    await ctx.db.insert("automationOutbox", {
+      eventId: eventIdReturned,
+      eventType: "loan.returned",
+      requestId: loan.requestId,
+      loanId: loan._id,
+      status: "pending",
+      attempts: 0,
+      nextRetryAt: now,
+      createdAt: now,
+    });
+
     return {
       success: true,
       loanId: loan._id,

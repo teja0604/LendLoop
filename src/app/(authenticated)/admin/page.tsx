@@ -8,6 +8,7 @@ import {
   AdminUserItem,
   AdminLoanItem,
   AdminToolItem,
+  AdminAutomationOverview,
   TOOL_CATEGORIES,
 } from "@/features/tools/types";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -33,6 +34,8 @@ import {
   UserX,
   Power,
   Loader2,
+  Activity,
+  Send,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -61,13 +64,18 @@ export default function AdminPage() {
     isAdmin ? {} : "skip"
   ) as AdminToolItem[] | undefined;
 
+  const automationOverview = useQuery(
+    api.admin.getAutomationOverview,
+    isAdmin ? {} : "skip"
+  ) as AdminAutomationOverview | undefined;
+
   // Mutations
   const setTrustedLender = useMutation(api.admin.setTrustedLender);
   const deactivateTool = useMutation(api.admin.deactivateToolAdmin);
   const reactivateTool = useMutation(api.admin.reactivateToolAdmin);
 
   // Local State
-  const [activeTab, setActiveTab] = useState<"overview" | "users" | "loans" | "tools">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "users" | "loans" | "tools" | "automation">("overview");
 
   // Users Tab Filters
   const [userSearch, setUserSearch] = useState("");
@@ -450,6 +458,25 @@ export default function AdminPage() {
           {toolsList && (
             <span className="text-xs px-2 py-0.5 rounded-full bg-[#E7E3D9] text-[#19372D]">
               {toolsList.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab("automation")}
+          className={`pb-3 px-1 transition-colors border-b-2 flex items-center gap-2 whitespace-nowrap ${
+            activeTab === "automation"
+              ? "border-[#19372D] text-[#19372D] font-semibold"
+              : "border-transparent text-[#777D76] hover:text-[#292D2A]"
+          }`}
+        >
+          <Activity className="w-4 h-4" />
+          <span>n8n Automations</span>
+          {automationOverview && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-[#E7E3D9] text-[#19372D]">
+              {automationOverview.counts.pending + automationOverview.counts.failed > 0
+                ? `${automationOverview.counts.pending} queued`
+                : "Active"}
             </span>
           )}
         </button>
@@ -954,6 +981,127 @@ export default function AdminPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* TAB 5: N8N AUTOMATIONS & WEBHOOKS */}
+      {activeTab === "automation" && (
+        <div className="space-y-6">
+          {/* Automation Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-4 rounded-2xl bg-white border border-[#E7E3D9]">
+              <div className="flex items-center justify-between text-xs text-[#777D76]">
+                <span>Delivered Events</span>
+                <span className="w-2 h-2 rounded-full bg-[#244B3C]" />
+              </div>
+              <p className="text-2xl font-editorial font-normal text-[#19372D] mt-2">
+                {automationOverview ? automationOverview.counts.sent : "—"}
+              </p>
+              <p className="text-[11px] text-[#777D76] mt-0.5">Dispatched to n8n workflows</p>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-white border border-[#E7E3D9]">
+              <div className="flex items-center justify-between text-xs text-[#777D76]">
+                <span>Pending Outbox</span>
+                <span className="w-2 h-2 rounded-full bg-[#E5A93C]" />
+              </div>
+              <p className="text-2xl font-editorial font-normal text-[#19372D] mt-2">
+                {automationOverview ? automationOverview.counts.pending : "—"}
+              </p>
+              <p className="text-[11px] text-[#777D76] mt-0.5">Awaiting batch processing</p>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-white border border-[#E7E3D9]">
+              <div className="flex items-center justify-between text-xs text-[#777D76]">
+                <span>Failed Outbox</span>
+                <span className="w-2 h-2 rounded-full bg-[#F0785B]" />
+              </div>
+              <p className="text-2xl font-editorial font-normal text-[#19372D] mt-2">
+                {automationOverview ? automationOverview.counts.failed : "—"}
+              </p>
+              <p className="text-[11px] text-[#777D76] mt-0.5">Retrying or dead-lettered</p>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-white border border-[#E7E3D9]">
+              <div className="flex items-center justify-between text-xs text-[#777D76]">
+                <span>Recorded Activity</span>
+                <span className="w-2 h-2 rounded-full bg-[#9CAF91]" />
+              </div>
+              <p className="text-2xl font-editorial font-normal text-[#19372D] mt-2">
+                {automationOverview ? automationOverview.recentActivities.length : "—"}
+              </p>
+              <p className="text-[11px] text-[#777D76] mt-0.5">Webhook write-back log entries</p>
+            </div>
+          </div>
+
+          {/* Activity Log Section */}
+          <div className="bg-white rounded-3xl border border-[#E7E3D9] p-6 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="font-editorial text-xl text-[#19372D] font-normal">
+                  Automation Activity Stream
+                </h3>
+                <p className="text-xs text-[#777D76]">
+                  Real-time log of n8n webhook completions and automated outcomes reported back to LendLoop.
+                </p>
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#DCE7D9]/60 text-[#244B3C] text-xs font-medium">
+                <Send className="w-3.5 h-3.5" />
+                <span>HMAC-SHA256 Authenticated</span>
+              </div>
+            </div>
+
+            {automationOverview === undefined ? (
+              <div className="py-12 text-center">
+                <Loader2 className="w-6 h-6 animate-spin text-[#244B3C] mx-auto" />
+              </div>
+            ) : automationOverview.recentActivities.length === 0 ? (
+              <EmptyState
+                title="No automation activity yet"
+                description="When borrowing requests are made, decisions logged, or loans returned, n8n workflows will report automated activities here."
+              />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-[#E7E3D9] text-[#777D76] font-medium">
+                      <th className="py-3 px-4">Event Type</th>
+                      <th className="py-3 px-4">Result</th>
+                      <th className="py-3 px-4">Summary</th>
+                      <th className="py-3 px-4">Idempotency Key</th>
+                      <th className="py-3 px-4">Timestamp</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E7E3D9]/60">
+                    {automationOverview.recentActivities.map((act) => (
+                      <tr key={act._id} className="hover:bg-[#F7F5EF]/60 transition-colors">
+                        <td className="py-3.5 px-4 font-mono text-[11px] text-[#19372D]">
+                          {act.eventType}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <Badge
+                            variant={act.result === "sent" ? "sage" : "coral"}
+                            size="sm"
+                          >
+                            {act.result === "sent" ? "Delivered" : "Failed"}
+                          </Badge>
+                        </td>
+                        <td className="py-3.5 px-4 text-[#292D2A] max-w-xs truncate" title={act.summary}>
+                          {act.summary}
+                        </td>
+                        <td className="py-3.5 px-4 font-mono text-[10px] text-[#777D76] max-w-[200px] truncate" title={act.idempotencyKey}>
+                          {act.idempotencyKey}
+                        </td>
+                        <td className="py-3.5 px-4 text-[#777D76] whitespace-nowrap">
+                          {new Date(act.createdAt).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
