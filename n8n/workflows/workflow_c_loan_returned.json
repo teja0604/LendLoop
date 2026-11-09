@@ -124,12 +124,23 @@
       "name": "Convex Return Writeback",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1340, 300]
+      "position": [1340, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "let originalResult = 'failed';\nlet originalSummary = 'Notification delivery failed.';\n\ntry {\n  const successData = $node[\"Sign Success Write-Back\"].json;\n  if (successData && successData.result === 'sent') {\n    originalResult = 'sent';\n    originalSummary = successData.summary;\n  }\n} catch (e) {\n  // Sign Success Write-Back did not execute\n}\n\nif (originalResult !== 'sent') {\n  try {\n    const failureData = $node[\"Sign Failure Write-Back\"].json;\n    if (failureData) {\n      originalSummary = failureData.summary || 'Notification delivery failed.';\n    }\n  } catch (e) {\n    // Sign Failure Write-Back did not execute\n  }\n}\n\nconst writebackResponse = $input.first().json || {};\nconst writebackOk = Boolean(writebackResponse.success === true);\n\nif (originalResult === 'sent' && writebackOk) {\n  return {\n    delivered: true,\n    result: 'sent',\n    summary: originalSummary\n  };\n} else {\n  const failureSummary = !writebackOk && originalResult === 'sent'\n    ? `Delivery succeeded but Convex activity writeback failed: ${JSON.stringify(writebackResponse)}`\n    : originalSummary;\n  return {\n    delivered: false,\n    result: 'failed',\n    summary: failureSummary\n  };\n}"
+      },
+      "id": "format-final-response",
+      "name": "Format Final Delivery Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ delivered: $input.first().json.result === 'sent', result: $input.first().json.result, summary: $input.first().json.summary }) }}",
+        "responseBody": "={{ JSON.stringify($input.first().json) }}",
         "options": {
           "responseCode": 200
         }
@@ -138,7 +149,7 @@
       "name": "Respond to Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1560, 300]
+      "position": [1780, 300]
     }
   ],
   "connections": {
@@ -223,6 +234,17 @@
       ]
     },
     "Convex Return Writeback": {
+      "main": [
+        [
+          {
+            "node": "Format Final Delivery Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Final Delivery Response": {
       "main": [
         [
           {

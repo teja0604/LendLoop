@@ -6,23 +6,23 @@ services:
     ports:
       - "127.0.0.1:5678:5678"
     environment:
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=http
-      - N8N_HOST=localhost
-      - WEBHOOK_URL=http://localhost:5678/
-      - GENERIC_TIMEZONE=UTC
-      - N8N_DEFAULT_BINARY_DATA_MODE=default
-      - N8N_METRICS=true
-      - N8N_LOG_LEVEL=info
-      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
-      - NODE_FUNCTION_ALLOW_BUILTIN=crypto
-      - CONVEX_SITE_URL=${CONVEX_SITE_URL:-http://localhost:3000}
-      - N8N_WEBHOOK_HMAC_SECRET=${N8N_WEBHOOK_HMAC_SECRET:?Error: N8N_WEBHOOK_HMAC_SECRET must be set in .env}
-      - SMTP_HOST=${SMTP_HOST:-}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_USER=${SMTP_USER:-}
-      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
-      - SMTP_SENDER_EMAIL=${SMTP_SENDER_EMAIL:-}
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: "http"
+      N8N_HOST: "localhost"
+      WEBHOOK_URL: "http://localhost:5678/"
+      GENERIC_TIMEZONE: "UTC"
+      N8N_DEFAULT_BINARY_DATA_MODE: "default"
+      N8N_METRICS: "true"
+      N8N_LOG_LEVEL: "info"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      NODE_FUNCTION_ALLOW_BUILTIN: "crypto"
+      CONVEX_SITE_URL: "${CONVEX_SITE_URL:-http://localhost:3000}"
+      N8N_WEBHOOK_HMAC_SECRET: "${N8N_WEBHOOK_HMAC_SECRET:?N8N_WEBHOOK_HMAC_SECRET must be set in .env}"
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_SENDER_EMAIL: "${SMTP_SENDER_EMAIL:-}"
     volumes:
       - n8n_data:/home/node/.n8n
 

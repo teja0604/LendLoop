@@ -584,6 +584,137 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
     }
   }
 
+  // 3.6 Malformed JSON response or empty body triggers retry with unacknowledged delivery error
+  {
+    const originalFetch = globalThis.fetch;
+    process.env.N8N_WEBHOOK_URL = "http://localhost:5678/webhook";
+    process.env.N8N_WEBHOOK_HMAC_SECRET = "test_hmac_secret_32_bytes_long_12345678";
+
+    const malformedEventId = await t.run(async (ctx) => {
+      return await ctx.db.insert("automationOutbox", {
+        eventId: `test_malformed_${Date.now()}`,
+        eventType: "borrow_request.created",
+        requestId,
+        status: "pending",
+        attempts: 0,
+        nextRetryAt: 0,
+        createdAt: Date.now(),
+      });
+    });
+
+    globalThis.fetch = async () => {
+      return new Response("not-valid-json", {
+        status: 200,
+        headers: { "Content-Type": "text/plain" },
+      });
+    };
+
+    try {
+      const res = await t.action(internal.outbox.processOutboxBatch, { limit: 1 });
+      assert.equal(res.successCount, 0);
+      assert.equal(res.failureCount, 1);
+
+      const updated = await t.run(async (ctx) => ctx.db.get(malformedEventId));
+      assert.equal(updated?.status, "pending");
+      assert.match(updated?.lastError || "", /Unacknowledged delivery/);
+      console.log("✔ Test 3.6 Passed: Malformed non-JSON response treated as unacknowledged delivery with retry scheduled.");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
+  // 3.7 Missing recipient address error response triggers retry with provider diagnostic
+  {
+    const originalFetch = globalThis.fetch;
+    process.env.N8N_WEBHOOK_URL = "http://localhost:5678/webhook";
+    process.env.N8N_WEBHOOK_HMAC_SECRET = "test_hmac_secret_32_bytes_long_12345678";
+
+    const missingRecipientEventId = await t.run(async (ctx) => {
+      return await ctx.db.insert("automationOutbox", {
+        eventId: `test_missing_recip_${Date.now()}`,
+        eventType: "borrow_request.created",
+        requestId,
+        status: "pending",
+        attempts: 0,
+        nextRetryAt: 0,
+        createdAt: Date.now(),
+      });
+    });
+
+    globalThis.fetch = async () => {
+      return new Response(
+        JSON.stringify({
+          delivered: false,
+          result: "failed",
+          summary: "Notification skipped: Recipient email address not configured.",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    };
+
+    try {
+      const res = await t.action(internal.outbox.processOutboxBatch, { limit: 1 });
+      assert.equal(res.successCount, 0);
+      assert.equal(res.failureCount, 1);
+
+      const updated = await t.run(async (ctx) => ctx.db.get(missingRecipientEventId));
+      assert.equal(updated?.status, "pending");
+      assert.match(updated?.lastError || "", /Notification skipped: Recipient email address not configured/);
+      console.log("✔ Test 3.7 Passed: Missing recipient address correctly triggers retry with descriptive summary.");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
+  // 3.8 Convex writeback failure during n8n execution cannot return false success
+  {
+    const originalFetch = globalThis.fetch;
+    process.env.N8N_WEBHOOK_URL = "http://localhost:5678/webhook";
+    process.env.N8N_WEBHOOK_HMAC_SECRET = "test_hmac_secret_32_bytes_long_12345678";
+
+    const writebackFailEventId = await t.run(async (ctx) => {
+      return await ctx.db.insert("automationOutbox", {
+        eventId: `test_wb_fail_${Date.now()}`,
+        eventType: "borrow_request.created",
+        requestId,
+        status: "pending",
+        attempts: 0,
+        nextRetryAt: 0,
+        createdAt: Date.now(),
+      });
+    });
+
+    globalThis.fetch = async () => {
+      return new Response(
+        JSON.stringify({
+          delivered: false,
+          result: "failed",
+          summary: "Delivery succeeded but Convex activity writeback failed: {\"error\":\"Internal error\"}",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    };
+
+    try {
+      const res = await t.action(internal.outbox.processOutboxBatch, { limit: 1 });
+      assert.equal(res.successCount, 0, "Writeback failure must NEVER produce successCount > 0");
+      assert.equal(res.failureCount, 1);
+
+      const updated = await t.run(async (ctx) => ctx.db.get(writebackFailEventId));
+      assert.equal(updated?.status, "pending");
+      assert.match(updated?.lastError || "", /Convex activity writeback failed/);
+      console.log("✔ Test 3.8 Passed: Convex activity writeback failure correctly triggers retry, never false success.");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
   // ===================================================================
   // 4. WEBHOOK ROUTING & UNSUPPORTED EVENT HANDLING
   // ===================================================================
@@ -900,7 +1031,12 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
     assert.ok(nodeTypes.includes("n8n-nodes-base.webhook"), `${wfFile} must have webhook node`);
     assert.ok(nodeTypes.includes("n8n-nodes-base.emailSend"), `${wfFile} must have emailSend provider node`);
     assert.ok(nodeTypes.includes("n8n-nodes-base.httpRequest"), `${wfFile} must have httpRequest writeback node`);
+    assert.ok(nodeTypes.includes("n8n-nodes-base.code"), `${wfFile} must have code nodes`);
     assert.ok(nodeTypes.includes("n8n-nodes-base.respondToWebhook"), `${wfFile} must have respondToWebhook node`);
+
+    // Verify presence of dedicated Format Final Delivery Response node
+    const formatResponseNode = content.nodes.find((n: { name: string }) => n.name === "Format Final Delivery Response");
+    assert.ok(formatResponseNode, `${wfFile} must contain 'Format Final Delivery Response' node`);
 
     // Verify webhook responseMode is 'responseNode' for synchronous acknowledgement
     const webhookNode = content.nodes.find((n: { type: string }) => n.type === "n8n-nodes-base.webhook");
@@ -949,6 +1085,41 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
       `${wfFile} branch 1 must route to Failure write-back`
     );
 
+    // Verify httpRequest writeback has onError: continueRegularOutput and connects to Format Final Delivery Response
+    const httpNode = content.nodes.find((n: { type: string }) => n.type === "n8n-nodes-base.httpRequest");
+    assert.ok(httpNode, `${wfFile} must have httpRequest writeback node`);
+    assert.equal(
+      httpNode.onError,
+      "continueRegularOutput",
+      `${wfFile} httpRequest writeback must configure onError: continueRegularOutput`
+    );
+
+    const httpConnections = content.connections[httpNode.name];
+    assert.ok(httpConnections?.main?.[0], `${wfFile} httpRequest must connect to downstream node`);
+    assert.equal(
+      httpConnections.main[0][0].node,
+      "Format Final Delivery Response",
+      `${wfFile} httpRequest must connect to 'Format Final Delivery Response'`
+    );
+
+    // Verify Format Final Delivery Response connects to Respond to Webhook
+    const formatConnections = content.connections["Format Final Delivery Response"];
+    assert.ok(formatConnections?.main?.[0], `${wfFile} Format Final Delivery Response must connect to downstream node`);
+    assert.equal(
+      formatConnections.main[0][0].node,
+      "Respond to Webhook",
+      `${wfFile} Format Final Delivery Response must connect to 'Respond to Webhook'`
+    );
+
+    // Verify Respond to Webhook uses $input.first().json directly
+    const respondNode = content.nodes.find((n: { type: string }) => n.type === "n8n-nodes-base.respondToWebhook");
+    assert.ok(respondNode, `${wfFile} must have respondToWebhook node`);
+    assert.match(
+      respondNode.parameters?.responseBody || "",
+      /JSON\.stringify\(\$input\.first\(\)\.json\)/,
+      `${wfFile} respondToWebhook must emit formatted response from upstream code node`
+    );
+
     // Verify no placeholder signatures or passwords exist
     const rawContent = JSON.stringify(content);
     assert.equal(rawContent.includes("placeholder_signature"), false, `${wfFile} must not have fake signature`);
@@ -956,7 +1127,7 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
     assert.equal(rawContent.includes("smtp_password"), false, `${wfFile} must not have raw smtp_password`);
     assert.equal(rawContent.includes("dev_hmac_secret"), false, `${wfFile} must not have dev_hmac_secret`);
   }
-  console.log("✔ Test 9.1 Passed: All 4 n8n workflow JSON configurations verified with real SMTP credentials, error branching, and synchronous webhook acknowledgement.");
+  console.log("✔ Test 9.1 Passed: All 4 n8n workflow JSON configurations verified with real SMTP credentials, error branching, dedicated delivery response formatting, and synchronous webhook acknowledgement.");
 
   // ===================================================================
   // 10. ADMIN AUTOMATION OVERVIEW
@@ -979,6 +1150,42 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
       }
     );
     console.log("✔ Test 10.1 Passed: Admin automation overview verified and protected.");
+  }
+
+  // ===================================================================
+  // 11. DOCKER COMPOSE CONFIGURATION & SECURITY VALIDATION
+  // ===================================================================
+  console.log("\n--- 11. Docker Compose Configuration & Security Validation ---");
+
+  {
+    const dockerComposePath = path.resolve(process.cwd(), "docker-compose.yml");
+    assert.ok(fs.existsSync(dockerComposePath), "docker-compose.yml must exist");
+
+    const composeContent = fs.readFileSync(dockerComposePath, "utf-8");
+
+    // 11.1 Port binding is restricted to loopback
+    assert.match(composeContent, /"127\.0\.0\.1:5678:5678"/, "Port must be strictly bound to 127.0.0.1 loopback");
+
+    // 11.2 Environment section is clean YAML mapping syntax (no list-style brackets or broken colons)
+    assert.match(composeContent, /N8N_PORT:\s*"5678"/, "N8N_PORT must use YAML mapping syntax");
+    assert.match(composeContent, /N8N_PROTOCOL:\s*"http"/, "N8N_PROTOCOL must use YAML mapping syntax");
+
+    // 11.3 Mandatory HMAC secret without fallback
+    assert.match(
+      composeContent,
+      /N8N_WEBHOOK_HMAC_SECRET:\s*"\$\{N8N_WEBHOOK_HMAC_SECRET:\?N8N_WEBHOOK_HMAC_SECRET must be set in \.env\}"/,
+      "N8N_WEBHOOK_HMAC_SECRET must be mandatory with no fallback secret"
+    );
+    assert.equal(composeContent.includes("dev_hmac_secret"), false, "Must not contain dev_hmac_secret fallback");
+
+    // 11.4 No fake SMTP passwords
+    assert.equal(composeContent.includes("smtp_password"), false, "Must not contain fake smtp_password");
+    assert.match(composeContent, /SMTP_PASSWORD:\s*"\$\{SMTP_PASSWORD:-\}"/);
+
+    // 11.5 Permission enforcement
+    assert.match(composeContent, /N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS:\s*"true"/);
+
+    console.log("✔ Test 11.1 Passed: Docker Compose YAML configuration strictly verified for loopback binding, mapping syntax, and security.");
   }
 
   console.log("\n===================================================================");

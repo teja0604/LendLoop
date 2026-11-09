@@ -154,23 +154,94 @@ To guarantee safe worker concurrency across multiple workers or server restarts:
 
 ---
 
-## 7. Importing and Activating Workflows in n8n
+## 7. Step-by-Step Local Deployment & Operation (Windows)
 
-To deploy the workflows in n8n:
+Follow these exact steps to run and test the complete automation stack locally on Windows:
 
-1. Launch n8n using Docker Compose:
-   ```bash
+### Step 1: Create the Root `D:\LendLoop\.env` File
+Docker Compose automatically loads variables from `.env` in the project root. **Note: Docker Compose does NOT automatically read Next.js `.env.local`.**
+Create `D:\LendLoop\.env` (or copy from `.env.example`):
+```ini
+# Docker Compose environment
+N8N_PORT=5678
+N8N_PROTOCOL=http
+N8N_HOST=localhost
+WEBHOOK_URL=http://localhost:5678/
+GENERIC_TIMEZONE=UTC
+N8N_LOG_LEVEL=info
+CONVEX_SITE_URL=http://localhost:3000
+N8N_WEBHOOK_HMAC_SECRET=replace_with_generated_32_byte_hex_secret
+```
+
+### Step 2: Generate a Strong 32-Byte HMAC Secret
+Generate a cryptographic 256-bit secret via PowerShell or Command Prompt:
+```powershell
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+Place this exact secret into:
+1. `D:\LendLoop\.env` (for the n8n Docker container as `N8N_WEBHOOK_HMAC_SECRET`)
+2. `D:\LendLoop\.env.local` and your Convex deployment environment (as `N8N_WEBHOOK_HMAC_SECRET`)
+
+> [!CAUTION]
+> Never share, paste, or commit real HMAC secrets or SMTP passwords into GitHub or external chat windows.
+
+### Step 3: Start Docker Desktop and Validate Docker Compose
+1. Ensure **Docker Desktop** is running on your machine.
+2. Validate the Compose syntax:
+   ```powershell
+   docker compose config
+   ```
+3. Start the n8n container in detached mode:
+   ```powershell
    docker compose up -d
    ```
-2. Open the n8n console at `http://127.0.0.1:5678`.
-3. Create the SMTP credential as described in Section 4 (**Credentials** → **Add Credential** → **SMTP**, named `LendLoop SMTP Account`).
-4. In n8n, click **Workflows** → **Import from File...** and import each JSON file from `n8n/workflows/`:
-   - `workflow_a_request_created.json`
-   - `workflow_b_request_decision.json`
-   - `workflow_c_loan_returned.json`
-   - `workflow_d_overdue_reminder.json`
-5. Verify that each workflow's `Send Email` node shows the green `LendLoop SMTP Account` credential attached.
-6. Toggle each workflow to **Active** (green).
+4. Verify the container is running and healthy:
+   ```powershell
+   docker compose ps
+   ```
+
+### Step 4: Access n8n and Create the SMTP Credential
+1. Open your browser and navigate to `http://127.0.0.1:5678`.
+2. Complete the initial local n8n account setup if prompted.
+3. In the left navigation bar, click **Credentials** → **Add Credential**.
+4. Select **SMTP**.
+5. Configure your credential:
+   - **Credential Name**: `LendLoop SMTP Account`
+   - **Host**: Your SMTP host (e.g., Mailtrap, SendGrid, Mailgun, Postmark, or local Mailpit)
+   - **Port**: `587` (STARTTLS) or `465` (SSL/TLS)
+   - **User**: Your SMTP username
+   - **Password**: Your SMTP password (securely stored in n8n's encrypted vault)
+   - **SSL/TLS**: Configure per provider recommendations
+6. Click **Save** and test the connection.
+
+### Step 5: Import and Rebind Workflow JSON Files
+1. Click **Workflows** in the left sidebar.
+2. For each file in `D:\LendLoop\n8n\workflows\`:
+   - Click **Import from File...**
+   - Import `workflow_a_request_created.json`
+   - Import `workflow_b_request_decision.json`
+   - Import `workflow_c_loan_returned.json`
+   - Import `workflow_d_overdue_reminder.json`
+3. **Post-Import Credential Binding**:
+   - Double-click the Email Send node in the workflow canvas:
+     - Workflow A: `Send Email via SMTP Provider`
+     - Workflow B: `Send Decision Email`
+     - Workflow C: `Send Return Email`
+     - Workflow D: `Send Overdue Email`
+   - In the **Credential for SMTP** dropdown, explicitly select your created `LendLoop SMTP Account`.
+   - Verify that the credential pill shows green (connected).
+4. Save the workflow and toggle the switch in the top right to **Active** (green).
+
+### Step 6: Verify Live Notifications and Activity
+1. In LendLoop, trigger a borrow request or status transition.
+2. Observe the outbox delivery in the Next.js / Convex logs:
+   - Event atomically claimed with `claimToken`.
+   - Dispatched with authentic HMAC-SHA256 signature and timestamp.
+3. In n8n (`http://127.0.0.1:5678`), click **Executions** in the left sidebar to inspect:
+   - Inbound HMAC verification passing.
+   - Provider delivery acknowledgement.
+   - Convex activity callback signed and recorded.
+4. In LendLoop, navigate to `/admin` to verify that the automation activity count and latest activity logs display `sent`.
 
 ---
 
