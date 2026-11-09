@@ -256,13 +256,33 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
     assert.ok(claimed.length > 0);
     const { outboxId, claimToken } = claimed[0];
 
-    // Attempt completion with wrong token
-    const mismatchRes = await t.mutation(internal.outbox.markEventSuccess, {
-      outboxId,
-      claimToken: "wrong_expired_token",
-    });
-    assert.equal(mismatchRes.success, false);
-    assert.equal(mismatchRes.reason, "claim_mismatch");
+    // Attempt completion with empty token is rejected
+    await assert.rejects(
+      async () => {
+        await t.mutation(internal.outbox.markEventSuccess, {
+          outboxId,
+          claimToken: "",
+        });
+      },
+      (err: Error) => {
+        assert.match(err.message, /claimToken is mandatory/);
+        return true;
+      }
+    );
+
+    // Attempt completion with wrong token is rejected
+    await assert.rejects(
+      async () => {
+        await t.mutation(internal.outbox.markEventSuccess, {
+          outboxId,
+          claimToken: "wrong_expired_token",
+        });
+      },
+      (err: Error) => {
+        assert.match(err.message, /Worker claim token 'wrong_expired_token' does not match active claim/);
+        return true;
+      }
+    );
 
     // Completion with legitimate matching token succeeds
     const successRes = await t.mutation(internal.outbox.markEventSuccess, {
@@ -273,7 +293,96 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
 
     const doc = await t.run(async (ctx) => ctx.db.get(outboxId));
     assert.equal(doc?.status, "sent");
-    console.log("✔ Test 2.2 Passed: Claim ownership protects against stale worker collision.");
+
+    // Attempt completion when status is no longer 'processing' is rejected
+    await assert.rejects(
+      async () => {
+        await t.mutation(internal.outbox.markEventSuccess, {
+          outboxId,
+          claimToken,
+        });
+      },
+      (err: Error) => {
+        assert.match(err.message, /expected 'processing'/);
+        return true;
+      }
+    );
+    console.log("✔ Test 2.2 Passed: Claim ownership strictly protects markEventSuccess against stale/invalid workers.");
+  }
+
+  // 2.3 markEventFailure strictly enforces claim ownership and processing status
+  {
+    await t.run(async (ctx) => {
+      return await ctx.db.insert("automationOutbox", {
+        eventId: "test_claim_failure_uuid",
+        eventType: "borrow_request.created",
+        requestId,
+        status: "pending",
+        attempts: 0,
+        nextRetryAt: 0,
+        createdAt: Date.now(),
+      });
+    });
+
+    const claimed = await t.mutation(internal.outbox.claimEligibleEvents, { limit: 1 });
+    assert.ok(claimed.length > 0);
+    const { outboxId, claimToken } = claimed[0];
+
+    // Empty claim token rejected
+    await assert.rejects(
+      async () => {
+        await t.mutation(internal.outbox.markEventFailure, {
+          outboxId,
+          claimToken: "   ",
+          errorMessage: "Missing token",
+        });
+      },
+      (err: Error) => {
+        assert.match(err.message, /claimToken is mandatory/);
+        return true;
+      }
+    );
+
+    // Mismatched token rejected
+    await assert.rejects(
+      async () => {
+        await t.mutation(internal.outbox.markEventFailure, {
+          outboxId,
+          claimToken: "mismatched_token",
+          errorMessage: "Failed attempt",
+        });
+      },
+      (err: Error) => {
+        assert.match(err.message, /Worker claim token 'mismatched_token' does not match active claim/);
+        return true;
+      }
+    );
+
+    // Valid claim token marks failure and schedules retry
+    const failRes = await t.mutation(internal.outbox.markEventFailure, {
+      outboxId,
+      claimToken,
+      errorMessage: "Network timeout test",
+    });
+    assert.equal(failRes.status, "pending");
+    assert.equal(failRes.attempts, 1);
+    assert.ok(failRes.nextRetryAt > Date.now());
+
+    // Once back in pending, cannot mark failure without re-claiming
+    await assert.rejects(
+      async () => {
+        await t.mutation(internal.outbox.markEventFailure, {
+          outboxId,
+          claimToken,
+          errorMessage: "Repeated failure without claiming",
+        });
+      },
+      (err: Error) => {
+        assert.match(err.message, /expected 'processing'/);
+        return true;
+      }
+    );
+    console.log("✔ Test 2.3 Passed: Claim ownership strictly protects markEventFailure against stale/invalid workers.");
   }
 
   // ===================================================================
@@ -311,6 +420,168 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
     if (originalUrl) process.env.N8N_WEBHOOK_URL = originalUrl;
     if (originalSecret) process.env.N8N_WEBHOOK_HMAC_SECRET = originalSecret;
     console.log("✔ Test 3.1 Passed: Missing configuration records failure, never false success.");
+  }
+
+  // 3.2 Webhook responding with verified provider delivery ({ result: "sent" }) confirms delivery
+  {
+    const originalFetch = globalThis.fetch;
+    process.env.N8N_WEBHOOK_URL = "http://localhost:5678/webhook";
+    process.env.N8N_WEBHOOK_HMAC_SECRET = "test_hmac_secret_32_bytes_long_12345678";
+
+    const ackEventId = await t.run(async (ctx) => {
+      return await ctx.db.insert("automationOutbox", {
+        eventId: `test_ack_success_${Date.now()}`,
+        eventType: "borrow_request.created",
+        requestId,
+        status: "pending",
+        attempts: 0,
+        nextRetryAt: 0,
+        createdAt: Date.now(),
+      });
+    });
+
+    // Mock fetch returning provider success
+    globalThis.fetch = async () => {
+      return new Response(JSON.stringify({ result: "sent", summary: "Email successfully delivered via SMTP" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    try {
+      const res = await t.action(internal.outbox.processOutboxBatch, { limit: 1 });
+      assert.equal(res.successCount, 1);
+      assert.equal(res.failureCount, 0);
+
+      const updated = await t.run(async (ctx) => ctx.db.get(ackEventId));
+      assert.equal(updated?.status, "sent", "Event must be marked 'sent' only when n8n confirms result: 'sent'");
+      console.log("✔ Test 3.2 Passed: Synchronous delivery acknowledgement marks event as 'sent' when provider succeeds.");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
+  // 3.3 Webhook responding with provider failure ({ result: "failed" }) triggers retry, never marks 'sent'
+  {
+    const originalFetch = globalThis.fetch;
+    process.env.N8N_WEBHOOK_URL = "http://localhost:5678/webhook";
+    process.env.N8N_WEBHOOK_HMAC_SECRET = "test_hmac_secret_32_bytes_long_12345678";
+
+    const failEventId = await t.run(async (ctx) => {
+      return await ctx.db.insert("automationOutbox", {
+        eventId: `test_ack_failed_${Date.now()}`,
+        eventType: "borrow_request.created",
+        requestId,
+        status: "pending",
+        attempts: 0,
+        nextRetryAt: 0,
+        createdAt: Date.now(),
+      });
+    });
+
+    // Mock fetch returning provider failure
+    globalThis.fetch = async () => {
+      return new Response(
+        JSON.stringify({ result: "failed", summary: "SMTP server refused connection: 535 Authentication failed" }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    };
+
+    try {
+      const res = await t.action(internal.outbox.processOutboxBatch, { limit: 1 });
+      assert.equal(res.successCount, 0, "Provider failure must NOT produce successCount > 0");
+      assert.equal(res.failureCount, 1);
+
+      const updated = await t.run(async (ctx) => ctx.db.get(failEventId));
+      assert.equal(updated?.status, "pending", "Failed provider response must schedule retry");
+      assert.equal(updated?.attempts, 1);
+      assert.match(updated?.lastError || "", /SMTP server refused connection/);
+      console.log("✔ Test 3.3 Passed: Provider failure correctly marks outbox failure with backoff retry.");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
+  // 3.4 Webhook merely accepting request without provider delivery confirmation triggers retry
+  {
+    const originalFetch = globalThis.fetch;
+    process.env.N8N_WEBHOOK_URL = "http://localhost:5678/webhook";
+    process.env.N8N_WEBHOOK_HMAC_SECRET = "test_hmac_secret_32_bytes_long_12345678";
+
+    const unackEventId = await t.run(async (ctx) => {
+      return await ctx.db.insert("automationOutbox", {
+        eventId: `test_unack_${Date.now()}`,
+        eventType: "borrow_request.created",
+        requestId,
+        status: "pending",
+        attempts: 0,
+        nextRetryAt: 0,
+        createdAt: Date.now(),
+      });
+    });
+
+    // Mock fetch returning asynchronous onReceived acceptance (no result: 'sent')
+    globalThis.fetch = async () => {
+      return new Response(JSON.stringify({ message: "Workflow was started" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    try {
+      const res = await t.action(internal.outbox.processOutboxBatch, { limit: 1 });
+      assert.equal(res.successCount, 0, "Mere webhook acceptance must NOT count as delivery success");
+      assert.equal(res.failureCount, 1);
+
+      const updated = await t.run(async (ctx) => ctx.db.get(unackEventId));
+      assert.equal(updated?.status, "pending");
+      assert.match(updated?.lastError || "", /Unacknowledged delivery/);
+      console.log("✔ Test 3.4 Passed: Asynchronous/unacknowledged acceptance is never falsely marked as sent.");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
+  // 3.5 HTTP server error from webhook endpoint triggers retry
+  {
+    const originalFetch = globalThis.fetch;
+    process.env.N8N_WEBHOOK_URL = "http://localhost:5678/webhook";
+    process.env.N8N_WEBHOOK_HMAC_SECRET = "test_hmac_secret_32_bytes_long_12345678";
+
+    const httpErrorEventId = await t.run(async (ctx) => {
+      return await ctx.db.insert("automationOutbox", {
+        eventId: `test_http_err_${Date.now()}`,
+        eventType: "borrow_request.created",
+        requestId,
+        status: "pending",
+        attempts: 0,
+        nextRetryAt: 0,
+        createdAt: Date.now(),
+      });
+    });
+
+    globalThis.fetch = async () => {
+      return new Response("Internal Server Error in n8n execution engine", {
+        status: 500,
+        statusText: "Internal Server Error",
+      });
+    };
+
+    try {
+      const res = await t.action(internal.outbox.processOutboxBatch, { limit: 1 });
+      assert.equal(res.successCount, 0);
+      assert.equal(res.failureCount, 1);
+
+      const updated = await t.run(async (ctx) => ctx.db.get(httpErrorEventId));
+      assert.equal(updated?.status, "pending");
+      assert.match(updated?.lastError || "", /HTTP 500/);
+      console.log("✔ Test 3.5 Passed: HTTP 500 error from n8n schedules retry with diagnostic log.");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   }
 
   // ===================================================================
@@ -629,13 +900,63 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
     assert.ok(nodeTypes.includes("n8n-nodes-base.webhook"), `${wfFile} must have webhook node`);
     assert.ok(nodeTypes.includes("n8n-nodes-base.emailSend"), `${wfFile} must have emailSend provider node`);
     assert.ok(nodeTypes.includes("n8n-nodes-base.httpRequest"), `${wfFile} must have httpRequest writeback node`);
+    assert.ok(nodeTypes.includes("n8n-nodes-base.respondToWebhook"), `${wfFile} must have respondToWebhook node`);
 
-    // Verify no placeholder signatures exist
+    // Verify webhook responseMode is 'responseNode' for synchronous acknowledgement
+    const webhookNode = content.nodes.find((n: { type: string }) => n.type === "n8n-nodes-base.webhook");
+    assert.equal(
+      webhookNode?.parameters?.responseMode,
+      "responseNode",
+      `${wfFile} webhook must have responseMode: 'responseNode'`
+    );
+
+    // Verify emailSend node configuration
+    const emailNode = content.nodes.find((n: { type: string }) => n.type === "n8n-nodes-base.emailSend");
+    assert.ok(emailNode, `${wfFile} must have emailSend node`);
+    assert.equal(
+      emailNode.onError,
+      "continueErrorOutput",
+      `${wfFile} emailSend node must configure onError: continueErrorOutput`
+    );
+    assert.equal(
+      emailNode.credentials?.smtp?.id,
+      "lendloop-smtp-credential",
+      `${wfFile} emailSend must reference 'lendloop-smtp-credential'`
+    );
+
+    // Verify emailSend connection branching (success to success-signing, error to failure-signing)
+    const emailNodeName = emailNode.name;
+    const connectionsFromEmail = content.connections[emailNodeName];
+    assert.ok(connectionsFromEmail, `${wfFile} connections must exist for ${emailNodeName}`);
+    assert.ok(
+      connectionsFromEmail.main && connectionsFromEmail.main.length >= 2,
+      `${wfFile} ${emailNodeName} must have at least 2 output branches (success and error)`
+    );
+
+    const successBranch = connectionsFromEmail.main[0];
+    const failureBranch = connectionsFromEmail.main[1];
+    assert.ok(successBranch && successBranch.length > 0, `${wfFile} must have success output branch`);
+    assert.ok(failureBranch && failureBranch.length > 0, `${wfFile} must have failure output branch`);
+
+    assert.match(
+      successBranch[0].node,
+      /Success/i,
+      `${wfFile} branch 0 must route to Success write-back`
+    );
+    assert.match(
+      failureBranch[0].node,
+      /Failure/i,
+      `${wfFile} branch 1 must route to Failure write-back`
+    );
+
+    // Verify no placeholder signatures or passwords exist
     const rawContent = JSON.stringify(content);
     assert.equal(rawContent.includes("placeholder_signature"), false, `${wfFile} must not have fake signature`);
     assert.equal(rawContent.includes("sha256=automated_workflow_signature"), false, `${wfFile} must not have placeholder signature`);
+    assert.equal(rawContent.includes("smtp_password"), false, `${wfFile} must not have raw smtp_password`);
+    assert.equal(rawContent.includes("dev_hmac_secret"), false, `${wfFile} must not have dev_hmac_secret`);
   }
-  console.log("✔ Test 9.1 Passed: All 4 n8n workflow JSON configurations verified with real provider nodes & authentic HMAC.");
+  console.log("✔ Test 9.1 Passed: All 4 n8n workflow JSON configurations verified with real SMTP credentials, error branching, and synchronous webhook acknowledgement.");
 
   // ===================================================================
   // 10. ADMIN AUTOMATION OVERVIEW

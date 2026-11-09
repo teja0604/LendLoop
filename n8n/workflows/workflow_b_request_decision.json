@@ -5,7 +5,7 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "lendloop-request-decision",
-        "responseMode": "onReceived",
+        "responseMode": "responseNode",
         "options": {}
       },
       "id": "webhook-trigger",
@@ -66,21 +66,27 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "position": [880, 220],
-      "onError": "continueRegularOutput"
+      "credentials": {
+        "smtp": {
+          "id": "lendloop-smtp-credential",
+          "name": "LendLoop SMTP Account"
+        }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\nconst item = $input.first().json;\nconst secret = $env.N8N_WEBHOOK_HMAC_SECRET;\nconst timestamp = Date.now().toString();\n\nconst writeback = {\n  idempotencyKey: item.idempotencyKey,\n  requestId: item.requestId,\n  loanId: item.loanId || undefined,\n  eventType: item.eventType,\n  recipientUserId: item.recipientUserId,\n  result: 'sent',\n  summary: `Notification email sent to borrower (${item.borrowerEmail}) for decision '${item.decision}' on request ${item.requestId}`\n};\n\nconst rawBody = JSON.stringify(writeback);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn {\n  signature: `sha256=${signature}`,\n  timestamp,\n  body: rawBody\n};"
+        "jsCode": "const crypto = require('crypto');\nconst extractData = $node[\"Verify HMAC & Parse Decision\"].json;\nconst secret = $env.N8N_WEBHOOK_HMAC_SECRET;\nconst timestamp = Date.now().toString();\n\nconst summary = `Notification email sent to borrower (${extractData.borrowerEmail}) for decision '${extractData.decision}' on request ${extractData.requestId}`;\n\nconst writeback = {\n  idempotencyKey: extractData.idempotencyKey,\n  requestId: extractData.requestId,\n  loanId: extractData.loanId || undefined,\n  eventType: extractData.eventType,\n  recipientUserId: extractData.recipientUserId,\n  result: 'sent',\n  summary\n};\n\nconst rawBody = JSON.stringify(writeback);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn {\n  signature: `sha256=${signature}`,\n  timestamp,\n  body: rawBody,\n  summary,\n  result: 'sent'\n};"
       },
       "id": "sign-decision-success",
       "name": "Sign Success Write-Back",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 220]
+      "position": [1100, 200]
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\nconst item = $input.first().json;\nconst secret = $env.N8N_WEBHOOK_HMAC_SECRET;\nconst timestamp = Date.now().toString();\n\nconst writeback = {\n  idempotencyKey: item.idempotencyKey,\n  requestId: item.requestId,\n  loanId: item.loanId || undefined,\n  eventType: item.eventType,\n  recipientUserId: item.recipientUserId,\n  result: 'failed',\n  summary: item.borrowerEmail ? 'SMTP provider delivery failed for decision notice.' : 'Notification skipped: Borrower email address not configured.'\n};\n\nconst rawBody = JSON.stringify(writeback);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn {\n  signature: `sha256=${signature}`,\n  timestamp,\n  body: rawBody\n};"
+        "jsCode": "const crypto = require('crypto');\nconst extractData = $node[\"Verify HMAC & Parse Decision\"].json;\nconst currentInput = $input.first().json;\nconst secret = $env.N8N_WEBHOOK_HMAC_SECRET;\nconst timestamp = Date.now().toString();\n\nconst hasEmail = Boolean(extractData.borrowerEmail && extractData.borrowerEmail.trim());\nconst errorMsg = currentInput.error ? (currentInput.error.message || JSON.stringify(currentInput.error)) : null;\n\nconst summary = !hasEmail\n  ? \"Notification skipped: Borrower email address not configured.\"\n  : errorMsg\n  ? `SMTP provider delivery failed for decision notice: ${errorMsg.slice(0, 200)}`\n  : \"SMTP provider delivery failed for decision notice.\";\n\nconst writeback = {\n  idempotencyKey: extractData.idempotencyKey,\n  requestId: extractData.requestId,\n  loanId: extractData.loanId || undefined,\n  eventType: extractData.eventType,\n  recipientUserId: extractData.recipientUserId,\n  result: 'failed',\n  summary\n};\n\nconst rawBody = JSON.stringify(writeback);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn {\n  signature: `sha256=${signature}`,\n  timestamp,\n  body: rawBody,\n  summary,\n  result: 'failed'\n};"
       },
       "id": "sign-decision-failure",
       "name": "Sign Failure Write-Back",
@@ -119,6 +125,20 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ delivered: $input.first().json.result === 'sent', result: $input.first().json.result, summary: $input.first().json.summary }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-to-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1560, 300]
     }
   ],
   "connections": {
@@ -170,6 +190,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Sign Failure Write-Back",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -189,6 +216,17 @@
         [
           {
             "node": "Convex Decision Writeback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convex Decision Writeback": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
             "type": "main",
             "index": 0
           }

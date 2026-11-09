@@ -84,23 +84,66 @@ Both Convex-to-n8n and n8n-to-Convex communications are signed and verified in c
 
 ## 4. Notification Provider Integration (n8n SMTP)
 
-Every n8n workflow executes a real notification provider step:
-- **Provider Node**: `n8n-nodes-base.emailSend` (SMTP).
-- **Environment Configuration**:
-  - `SMTP_HOST`: Hostname of SMTP relay (e.g. `smtp.mailgun.org`, `smtp.sendgrid.net`, or local Mailpit/Mailtrap).
-  - `SMTP_PORT`: SMTP port (e.g. `587` or `465`).
-  - `SMTP_USER`: SMTP username.
-  - `SMTP_PASSWORD`: SMTP secret/password.
-  - `SMTP_SENDER_EMAIL`: From address (e.g. `notifications@lendloop.org`).
+Every n8n workflow executes a real notification provider step using n8n's native SMTP integration.
+
+### Setting Up the SMTP Credential in n8n
+
+The four workflow definitions reference an n8n credential named `LendLoop SMTP Account` with ID `lendloop-smtp-credential`. Passwords are never placed into workflow JSON files.
+
+To configure this credential in n8n:
+1. Open the n8n web console (`http://127.0.0.1:5678`).
+2. Navigate to **Credentials** in the left sidebar.
+3. Click **Add Credential** and search for **SMTP**.
+4. Configure the credential:
+   - **Credential Name**: `LendLoop SMTP Account`
+   - **Host**: Your SMTP host (e.g. `smtp.mailgun.org`, `smtp.sendgrid.net`, `smtp.postmarkapp.com`, or local `mailpit`)
+   - **Port**: `587` (STARTTLS) or `465` (SSL/TLS)
+   - **User**: SMTP username
+   - **Password**: SMTP secret/password (securely stored in n8n's encrypted vault)
+   - **SSL/TLS**: Enable based on your provider configuration
+5. Save and test the credential.
+
+If credentials are not configured or invalid, notification delivery fails explicitly and routes directly to the failure writeback branch.
+
+### Error Branching and Delivery Acknowledgement Model
+
+Each workflow's `emailSend` node has:
+- `onError: "continueErrorOutput"`: Ensures unexpected delivery errors or SMTP server disconnects are intercepted and routed to the failure branch rather than crashing the workflow.
+- **Two explicit output branches**:
+  - **Branch 0 (Success)**: Activated only when the SMTP provider acknowledges delivery. Routes to `Sign Success Write-Back`, recording `{ result: "sent" }`.
+  - **Branch 1 (Failure)**: Activated if the SMTP server rejects authentication, connection, or recipient address. Routes to `Sign Failure Write-Back`, recording `{ result: "failed", summary: "SMTP provider delivery failed." }`.
 - **Recipient Address Validation**:
-  - Workflows evaluate whether the recipient has a valid configured email address.
-  - If recipient email is missing, the workflow branches directly to the failure write-back node with summary: `Notification skipped: Recipient email address not configured.`
-  - If SMTP delivery fails, the failure write-back node logs: `SMTP provider delivery failed.`
-  - A `"sent"` status is recorded **only** after the provider confirms delivery.
+  - Prior to SMTP delivery, the workflow evaluates `data.recipientEmail`.
+  - If missing or unconfigured, the workflow bypasses the SMTP node entirely and routes straight to `Sign Failure Write-Back` with `{ result: "failed", summary: "Notification skipped: Recipient email address not configured." }`.
+
+### Synchronous Webhook Acknowledgement (Dispatched vs Delivered)
+
+LendLoop enforces strict delivery semantics: **Dispatched $\neq$ Delivered**.
+
+1. Webhook nodes are set to `responseMode: "responseNode"`. n8n holds the HTTP connection open until the downstream nodes finish.
+2. The workflow terminates with a `Respond to Webhook` node returning:
+   - Success: `{ delivered: true, result: "sent", summary: "..." }`
+   - Failure: `{ delivered: false, result: "failed", summary: "..." }`
+3. Convex's `processOutboxBatch` inspects this response:
+   - If `result === "sent"`, it executes `markEventSuccess`, marking the outbox status as `"sent"`.
+   - If `result === "failed"` or the response is unacknowledged (such as a generic `onReceived` response), Convex executes `markEventFailure` to record diagnostics and schedule an exponential backoff retry.
+   - An event is never falsely marked as delivered simply because n8n accepted the webhook.
 
 ---
 
-## 5. Overdue Reminder Processing
+## 5. Claim Ownership and Concurrency Protection
+
+To guarantee safe worker concurrency across multiple workers or server restarts:
+1. `claimEligibleEvents` claims pending or stale events, generating a cryptographically random `claimToken` and setting `processingStartedAt = Date.now()`.
+2. Stale recovery evaluates `processingStartedAt` (5-minute expiration window), not `createdAt`.
+3. `markEventSuccess` and `markEventFailure` strictly require `claimToken: v.string()`:
+   - Rejects empty or missing claim tokens.
+   - Rejects mismatched tokens (protecting against stale/zombie workers completing after a timeout).
+   - Rejects events not in `processing` status.
+
+---
+
+## 6. Overdue Reminder Processing
 
 - **Authoritative Scheduler**: Convex cron job (`scan-overdue-loans` in `convex/crons.ts`, running every 12 hours).
 - **Deterministic Outbox Identity**: Event ID formatted as `overdue_<loanId>_<YYYY-MM-DD>`.
@@ -111,25 +154,49 @@ Every n8n workflow executes a real notification provider step:
 
 ---
 
-## 6. Importing and Activating Workflows in n8n
+## 7. Importing and Activating Workflows in n8n
 
 To deploy the workflows in n8n:
 
-1. Launch n8n:
+1. Launch n8n using Docker Compose:
    ```bash
    docker compose up -d
    ```
-2. Open the n8n console at `http://localhost:5678`.
-3. In n8n, click **Workflows** → **Import from File...** and import each JSON file from `n8n/workflows/`:
+2. Open the n8n console at `http://127.0.0.1:5678`.
+3. Create the SMTP credential as described in Section 4 (**Credentials** → **Add Credential** → **SMTP**, named `LendLoop SMTP Account`).
+4. In n8n, click **Workflows** → **Import from File...** and import each JSON file from `n8n/workflows/`:
    - `workflow_a_request_created.json`
    - `workflow_b_request_decision.json`
    - `workflow_c_loan_returned.json`
    - `workflow_d_overdue_reminder.json`
-4. Toggle each workflow to **Active** (green).
+5. Verify that each workflow's `Send Email` node shows the green `LendLoop SMTP Account` credential attached.
+6. Toggle each workflow to **Active** (green).
 
 ---
 
-## 7. Environment Variables Reference
+## 8. Security & Cryptographic Setup
+
+### Generating a Strong 32-Byte Hex HMAC Secret
+A strong 32-byte (256-bit) secret is required for signing webhooks between Convex and n8n. Generate one with:
+
+```bash
+# Using Node.js
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+
+# OR using OpenSSL
+openssl rand -hex 32
+```
+
+Set the generated secret as `N8N_WEBHOOK_HMAC_SECRET` in both your `.env.local` / Convex environment and your n8n environment.
+
+### Docker Compose Security
+- Port binding is restricted to `127.0.0.1:5678:5678` so that n8n is not exposed to the public network or host interfaces directly.
+- `N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true` ensures file permission integrity.
+- Fallback secrets and default passwords have been removed. `N8N_WEBHOOK_HMAC_SECRET` is mandatory.
+
+---
+
+## 9. Environment Variables Reference
 
 | Variable | Environment | Description |
 | :--- | :--- | :--- |

@@ -249,20 +249,36 @@ export const getEventPayload = internalQuery({
 
 /**
  * INTERNAL MUTATION: Mark Event as Successfully Sent
- * Enforces claimToken verification to prevent expired workers from overwriting newer claims.
+ * Enforces mandatory claimToken and validates active 'processing' status
+ * to prevent expired or unauthorized workers from overwriting newer claims.
  */
 export const markEventSuccess = internalMutation({
   args: {
     outboxId: v.id("automationOutbox"),
-    claimToken: v.optional(v.string()),
+    claimToken: v.string(),
   },
   handler: async (ctx, args) => {
-    const event = await ctx.db.get(args.outboxId);
-    if (!event) return { success: false, reason: "not_found" };
+    if (!args.claimToken || args.claimToken.trim() === "") {
+      throw new Error("Validation Error: claimToken is mandatory to mark event success.");
+    }
 
-    // Verify claim ownership
-    if (args.claimToken && event.claimToken && event.claimToken !== args.claimToken) {
-      return { success: false, reason: "claim_mismatch" };
+    const event = await ctx.db.get(args.outboxId);
+    if (!event) {
+      throw new Error("Not Found: Outbox event does not exist.");
+    }
+
+    // Reject updates when the event is no longer in processing state
+    if (event.status !== "processing") {
+      throw new Error(
+        `Invalid State: Cannot mark event as sent because event status is '${event.status}', expected 'processing'.`
+      );
+    }
+
+    // Reject a mismatched or expired claim token
+    if (!event.claimToken || event.claimToken !== args.claimToken) {
+      throw new Error(
+        `Claim Ownership Error: Worker claim token '${args.claimToken}' does not match active claim '${event.claimToken || "none"}'.`
+      );
     }
 
     await ctx.db.patch(args.outboxId, {
@@ -277,22 +293,38 @@ export const markEventSuccess = internalMutation({
 
 /**
  * INTERNAL MUTATION: Mark Event as Failed with Exponential Backoff
- * Enforces claimToken verification to prevent expired workers from overwriting newer claims.
+ * Enforces mandatory claimToken and validates active 'processing' status
+ * to prevent expired or unauthorized workers from overwriting newer claims.
  */
 export const markEventFailure = internalMutation({
   args: {
     outboxId: v.id("automationOutbox"),
-    claimToken: v.optional(v.string()),
+    claimToken: v.string(),
     errorMessage: v.string(),
     terminal: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const event = await ctx.db.get(args.outboxId);
-    if (!event) return null;
+    if (!args.claimToken || args.claimToken.trim() === "") {
+      throw new Error("Validation Error: claimToken is mandatory to mark event failure.");
+    }
 
-    // Verify claim ownership
-    if (args.claimToken && event.claimToken && event.claimToken !== args.claimToken) {
-      return null;
+    const event = await ctx.db.get(args.outboxId);
+    if (!event) {
+      throw new Error("Not Found: Outbox event does not exist.");
+    }
+
+    // Reject updates when the event is no longer in processing state
+    if (event.status !== "processing") {
+      throw new Error(
+        `Invalid State: Cannot mark event as failure because event status is '${event.status}', expected 'processing'.`
+      );
+    }
+
+    // Reject a mismatched or expired claim token
+    if (!event.claimToken || event.claimToken !== args.claimToken) {
+      throw new Error(
+        `Claim Ownership Error: Worker claim token '${args.claimToken}' does not match active claim '${event.claimToken || "none"}'.`
+      );
     }
 
     const newAttempts = event.attempts + 1;
@@ -463,15 +495,47 @@ export const processOutboxBatch = internalAction({
         });
 
         if (response.ok) {
-          const res = await ctx.runMutation(internal.outbox.markEventSuccess, {
-            outboxId: item.outboxId,
-            claimToken: item.claimToken,
-          });
+          let responseData: { result?: unknown; summary?: unknown } | null = null;
+          try {
+            responseData = await response.json();
+          } catch {
+            // response was not JSON
+          }
 
-          if (res && res.success) {
-            successCount++;
+          // Acknowledge completion ONLY if provider confirmation verifies delivery
+          if (responseData && responseData.result === "sent") {
+            const res = await ctx.runMutation(internal.outbox.markEventSuccess, {
+              outboxId: item.outboxId,
+              claimToken: item.claimToken,
+            });
+
+            if (res && res.success) {
+              successCount++;
+            } else {
+              // Claim was lost to another worker
+              failureCount++;
+            }
+          } else if (responseData && responseData.result === "failed") {
+            // Notification provider or recipient address failed explicitly
+            const failureReason =
+              typeof responseData.summary === "string"
+                ? responseData.summary
+                : "Notification provider reported failure.";
+            await ctx.runMutation(internal.outbox.markEventFailure, {
+              outboxId: item.outboxId,
+              claimToken: item.claimToken,
+              errorMessage: failureReason,
+            });
+            failureCount++;
           } else {
-            // Claim was lost to another worker
+            // Webhook accepted without delivery confirmation (e.g. onReceived or unconfirmed execution)
+            // Never falsely mark as sent. Queue for recovery/retry.
+            await ctx.runMutation(internal.outbox.markEventFailure, {
+              outboxId: item.outboxId,
+              claimToken: item.claimToken,
+              errorMessage:
+                "Unacknowledged delivery: Webhook response did not confirm provider completion.",
+            });
             failureCount++;
           }
         } else {
