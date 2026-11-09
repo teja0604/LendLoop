@@ -119,7 +119,8 @@
           ]
         },
         "sendBody": true,
-        "specifyBody": "string",
+        "contentType": "raw",
+        "rawContentType": "application/json",
         "body": "={{ $input.first().json.body }}",
         "options": {}
       },

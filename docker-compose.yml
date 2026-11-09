@@ -15,6 +15,7 @@ services:
       N8N_METRICS: "true"
       N8N_LOG_LEVEL: "info"
       N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
       NODE_FUNCTION_ALLOW_BUILTIN: "crypto"
       CONVEX_SITE_URL: "${CONVEX_SITE_URL:-http://localhost:3000}"
       N8N_WEBHOOK_HMAC_SECRET: "${N8N_WEBHOOK_HMAC_SECRET:?N8N_WEBHOOK_HMAC_SECRET must be set in .env}"
@@ -25,6 +26,17 @@ services:
       SMTP_SENDER_EMAIL: "${SMTP_SENDER_EMAIL:-}"
     volumes:
       - n8n_data:/home/node/.n8n
+
+  webhook-proxy:
+    image: nginx:alpine
+    container_name: lendloop-webhook-proxy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5679:5679"
+    volumes:
+      - ./n8n/proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - n8n
 
 volumes:
   n8n_data:

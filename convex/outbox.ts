@@ -38,7 +38,8 @@ export function resolveWebhookUrl(eventType: string, baseOrOverrideUrl?: string 
   if (trimmed.endsWith(`/${path}`) || trimmed.endsWith(path)) {
     return trimmed;
   }
-  return `${trimmed}/${path}`;
+  const baseWithWebhook = trimmed.endsWith("/webhook") ? trimmed : `${trimmed}/webhook`;
+  return `${baseWithWebhook}/${path}`;
 }
 
 /**
