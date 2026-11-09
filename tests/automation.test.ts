@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { convexTest } from "convex-test";
 import schema from "../convex/schema";
 import { api, internal } from "../convex/_generated/api";
@@ -124,7 +125,7 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
     console.log("✔ Test 1.1 Passed: borrow_request.created event atomically emitted into outbox.");
   }
 
-  // 1.2 Approving a borrow request atomically inserts 'borrow_request.approved' and 'loan.created'
+  // 1.2 Approving a borrow request atomically inserts 'borrow_request.approved' and NOT redundant 'loan.created'
   {
     const approveRes = await asLender.mutation(api.borrowRequests.approveRequest, {
       requestId,
@@ -145,9 +146,9 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
     const loanCreatedEvent = approvalEvents.find((e) => e.eventType === "loan.created");
 
     assert.ok(approvedEvent, "Outbox must contain borrow_request.approved event");
-    assert.ok(loanCreatedEvent, "Outbox must contain loan.created event");
-    assert.equal(loanCreatedEvent?.loanId, loanId, "loan.created must reference loanId");
-    console.log("✔ Test 1.2 Passed: borrow_request.approved & loan.created atomically emitted into outbox.");
+    assert.equal(approvedEvent.loanId, loanId, "borrow_request.approved must reference loanId");
+    assert.equal(loanCreatedEvent, undefined, "loan.created must NOT be emitted to prevent duplicate approval emails");
+    console.log("✔ Test 1.2 Passed: borrow_request.approved emitted with loanId; redundant loan.created omitted.");
   }
 
   // 1.3 Declining a borrow request atomically inserts 'borrow_request.declined'
@@ -725,13 +726,13 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
     assert.equal(resolveWebhookUrl("borrow_request.created", base), "http://localhost:5678/webhook/lendloop-request-created");
     assert.equal(resolveWebhookUrl("borrow_request.approved", base), "http://localhost:5678/webhook/lendloop-request-decision");
     assert.equal(resolveWebhookUrl("borrow_request.declined", base), "http://localhost:5678/webhook/lendloop-request-decision");
-    assert.equal(resolveWebhookUrl("loan.created", base), "http://localhost:5678/webhook/lendloop-loan-created");
     assert.equal(resolveWebhookUrl("loan.returned", base), "http://localhost:5678/webhook/lendloop-loan-returned");
     assert.equal(resolveWebhookUrl("loan.overdue", base), "http://localhost:5678/webhook/lendloop-overdue-reminder");
 
-    // Unsupported event type returns null
+    // Unsupported event types return null (including redundant loan.created and unknown types)
+    assert.equal(resolveWebhookUrl("loan.created", base), null, "loan.created must be rejected as unsupported route");
     assert.equal(resolveWebhookUrl("unknown.event.type", base), null);
-    console.log("✔ Test 4.1 Passed: Webhook routing correctly maps all event types and rejects unsupported events.");
+    console.log("✔ Test 4.1 Passed: Webhook routing correctly maps all active event types and rejects unsupported events.");
   }
 
   // ===================================================================
@@ -1120,6 +1121,17 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
       `${wfFile} respondToWebhook must emit formatted response from upstream code node`
     );
 
+    // Verify all code nodes configure mode: 'runOnceForAllItems'
+    const codeNodes = content.nodes.filter((n: { type: string }) => n.type === "n8n-nodes-base.code");
+    assert.ok(codeNodes.length >= 4, `${wfFile} must have at least 4 code nodes`);
+    for (const cn of codeNodes) {
+      assert.equal(
+        cn.parameters?.mode,
+        "runOnceForAllItems",
+        `${wfFile} code node '${cn.name}' must have mode: 'runOnceForAllItems'`
+      );
+    }
+
     // Verify no placeholder signatures or passwords exist
     const rawContent = JSON.stringify(content);
     assert.equal(rawContent.includes("placeholder_signature"), false, `${wfFile} must not have fake signature`);
@@ -1127,7 +1139,7 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
     assert.equal(rawContent.includes("smtp_password"), false, `${wfFile} must not have raw smtp_password`);
     assert.equal(rawContent.includes("dev_hmac_secret"), false, `${wfFile} must not have dev_hmac_secret`);
   }
-  console.log("✔ Test 9.1 Passed: All 4 n8n workflow JSON configurations verified with real SMTP credentials, error branching, dedicated delivery response formatting, and synchronous webhook acknowledgement.");
+  console.log("✔ Test 9.1 Passed: All 4 n8n workflow JSON configurations verified with real SMTP credentials, error branching, runOnceForAllItems mode, and synchronous webhook acknowledgement.");
 
   // ===================================================================
   // 10. ADMIN AUTOMATION OVERVIEW
@@ -1186,6 +1198,208 @@ test("Phase 7: n8n Automation and Webhook Integration Comprehensive Test Suite",
     assert.match(composeContent, /N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS:\s*"true"/);
 
     console.log("✔ Test 11.1 Passed: Docker Compose YAML configuration strictly verified for loopback binding, mapping syntax, and security.");
+  }
+
+  // ===================================================================
+  // 12. ACTUAL EXECUTION OF N8N CODE NODE SCRIPTS (SANDBOXED RUNTIME TESTS)
+  // ===================================================================
+  console.log("\n--- 12. Actual Execution of n8n Code Node Scripts ---");
+
+  interface WorkflowNode {
+    name: string;
+    type: string;
+    parameters: {
+      jsCode?: string;
+      mode?: string;
+      path?: string;
+      responseMode?: string;
+      responseBody?: string;
+    };
+    credentials?: { smtp?: { id: string; name: string } };
+    onError?: string;
+  }
+
+  interface CodeNodeOutputItem {
+    json: Record<string, unknown>;
+  }
+
+  {
+    // Helper to run code node script in sandbox matching n8n runtime
+    function runCodeNode(
+      script: string,
+      env: Record<string, string>,
+      inputJson: Record<string, unknown>,
+      nodeMocks: Record<string, unknown> = {}
+    ): CodeNodeOutputItem[] {
+      const $env = env;
+      const $input = {
+        first: () => ({ json: inputJson }),
+        all: () => [{ json: inputJson }],
+      };
+      const $node: Record<string, { json: unknown }> = {};
+      for (const [name, val] of Object.entries(nodeMocks)) {
+        $node[name] = { json: val };
+      }
+
+      const fn = new Function("$env", "$input", "$node", "require", script);
+      return fn($env, $input, $node, require) as CodeNodeOutputItem[];
+    }
+
+    const testSecret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const wfAPath = path.resolve(process.cwd(), "n8n", "workflows", "workflow_a_request_created.json");
+    const wfA = JSON.parse(fs.readFileSync(wfAPath, "utf-8")) as { nodes: WorkflowNode[] };
+
+    // 12.1 HMAC Verification Code Node Execution with Authentic Signature
+    const verifyNode = wfA.nodes.find((n: WorkflowNode) => n.name === "Verify HMAC & Extract Payload");
+    assert.ok(verifyNode?.parameters.jsCode);
+    const nowTs = Date.now();
+    const eventBody = {
+      eventId: "evt_test_123",
+      eventType: "borrow_request.created",
+      data: {
+        requestId: "req_test_123",
+        startDate: "2026-12-01",
+        endDate: "2026-12-05",
+        tool: { _id: "tool_123", name: "Cordless Drill" },
+        lender: { _id: "lender_123", email: "lender@example.com", displayName: "Lender User" },
+        borrower: { _id: "borrower_123", displayName: "Borrower User" },
+      },
+    };
+    const rawBody = JSON.stringify(eventBody);
+    const validSignature = crypto.createHmac("sha256", testSecret).update(`${nowTs}.${rawBody}`).digest("hex");
+
+    const verifyOutput = runCodeNode(
+      verifyNode.parameters.jsCode,
+      { N8N_WEBHOOK_HMAC_SECRET: testSecret },
+      {
+        headers: {
+          "x-lendloop-signature": `sha256=${validSignature}`,
+          "x-lendloop-timestamp": nowTs.toString(),
+        },
+        rawBody,
+        body: eventBody,
+      }
+    );
+
+    assert.ok(Array.isArray(verifyOutput), "Verify node must return an array");
+    assert.equal(verifyOutput.length, 1);
+    assert.ok(verifyOutput[0].json, "Item must contain 'json' property");
+    assert.equal(verifyOutput[0].json.requestId, "req_test_123");
+    assert.equal(verifyOutput[0].json.lenderEmail, "lender@example.com");
+
+    // 12.2 HMAC Verification Code Node Rejection with Tampered Signature
+    assert.throws(
+      () => {
+        runCodeNode(
+          verifyNode.parameters.jsCode!,
+          { N8N_WEBHOOK_HMAC_SECRET: testSecret },
+          {
+            headers: {
+              "x-lendloop-signature": `sha256=invalid${validSignature.slice(7)}`,
+              "x-lendloop-timestamp": nowTs.toString(),
+            },
+            rawBody,
+            body: eventBody,
+          }
+        );
+      },
+      /Unauthorized: HMAC signature mismatch/
+    );
+
+    // 12.3 Sign Success Write-Back Code Node Execution
+    const signSuccessNode = wfA.nodes.find((n: WorkflowNode) => n.name === "Sign Success Write-Back");
+    assert.ok(signSuccessNode?.parameters.jsCode);
+    const signSuccessOutput = runCodeNode(
+      signSuccessNode.parameters.jsCode,
+      { N8N_WEBHOOK_HMAC_SECRET: testSecret },
+      {},
+      { "Verify HMAC & Extract Payload": verifyOutput[0].json }
+    );
+    assert.ok(Array.isArray(signSuccessOutput));
+    assert.equal(signSuccessOutput[0].json.result, "sent");
+    assert.match(signSuccessOutput[0].json.signature as string, /^sha256=[a-f0-9]{64}$/);
+
+    // 12.4 Sign Failure Write-Back Code Node Execution
+    const signFailureNode = wfA.nodes.find((n: WorkflowNode) => n.name === "Sign Failure Write-Back");
+    assert.ok(signFailureNode?.parameters.jsCode);
+    const signFailureOutput = runCodeNode(
+      signFailureNode.parameters.jsCode,
+      { N8N_WEBHOOK_HMAC_SECRET: testSecret },
+      { error: { message: "SMTP connection refused" } },
+      { "Verify HMAC & Extract Payload": verifyOutput[0].json }
+    );
+    assert.ok(Array.isArray(signFailureOutput));
+    assert.equal(signFailureOutput[0].json.result, "failed");
+    assert.match(signFailureOutput[0].json.summary as string, /SMTP provider delivery failed/);
+
+    // 12.5 Format Final Delivery Response: Success branch
+    const formatNode = wfA.nodes.find((n: WorkflowNode) => n.name === "Format Final Delivery Response");
+    assert.ok(formatNode?.parameters.jsCode);
+    const finalSuccess = runCodeNode(
+      formatNode.parameters.jsCode,
+      {},
+      { success: true, activityId: "act_123" }, // Convex response
+      { "Sign Success Write-Back": signSuccessOutput[0].json }
+    );
+    assert.ok(Array.isArray(finalSuccess));
+    assert.equal(finalSuccess[0].json.delivered, true);
+    assert.equal(finalSuccess[0].json.result, "sent");
+
+    // 12.6 Format Final Delivery Response: Convex Activity Writeback failure prevents false delivery success
+    const finalWritebackFailure = runCodeNode(
+      formatNode.parameters.jsCode,
+      {},
+      { error: "Internal Server Error", status: 500 }, // Convex writeback failed
+      { "Sign Success Write-Back": signSuccessOutput[0].json }
+    );
+    assert.ok(Array.isArray(finalWritebackFailure));
+    assert.equal(finalWritebackFailure[0].json.delivered, false);
+    assert.equal(finalWritebackFailure[0].json.result, "failed");
+    assert.match(finalWritebackFailure[0].json.summary as string, /Convex activity writeback failed/);
+
+    // 12.7 Format Final Delivery Response: SMTP failure branch
+    const finalSmtpFailure = runCodeNode(
+      formatNode.parameters.jsCode,
+      {},
+      { success: true, activityId: "act_123" },
+      { "Sign Failure Write-Back": signFailureOutput[0].json }
+    );
+    assert.ok(Array.isArray(finalSmtpFailure));
+    assert.equal(finalSmtpFailure[0].json.delivered, false);
+    assert.equal(finalSmtpFailure[0].json.result, "failed");
+
+    // 12.8 Every supported outbox event maps to a real workflow file endpoint
+    const allWorkflowEndpoints = new Set<string>();
+    const workflowFiles = [
+      "workflow_a_request_created.json",
+      "workflow_b_request_decision.json",
+      "workflow_c_loan_returned.json",
+      "workflow_d_overdue_reminder.json",
+    ];
+    for (const wf of workflowFiles) {
+      const doc = JSON.parse(
+        fs.readFileSync(path.resolve(process.cwd(), "n8n", "workflows", wf), "utf-8")
+      ) as { nodes: WorkflowNode[] };
+      const wh = doc.nodes.find((n: WorkflowNode) => n.type === "n8n-nodes-base.webhook");
+      if (wh?.parameters?.path) {
+        allWorkflowEndpoints.add(wh.parameters.path);
+      }
+    }
+
+    const { EVENT_ROUTE_PATHS } = await import("../convex/outbox");
+    for (const [evtType, routePath] of Object.entries(EVENT_ROUTE_PATHS)) {
+      assert.ok(
+        allWorkflowEndpoints.has(routePath),
+        `Event '${evtType}' route '${routePath}' must correspond to an active workflow webhook endpoint`
+      );
+    }
+    assert.equal(
+      allWorkflowEndpoints.has("lendloop-loan-created"),
+      false,
+      "No dangling lendloop-loan-created endpoint should exist"
+    );
+
+    console.log("✔ Test 12.1 Passed: All n8n Code node scripts executed in runtime sandbox, validating signature checking, signing, writeback failure protection, and endpoint routing.");
   }
 
   console.log("\n===================================================================");

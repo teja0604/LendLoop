@@ -266,23 +266,13 @@ export const approveRequest = mutation({
       updatedAt: now,
     });
 
-    // 3. Transactional Outbox: Emit borrow_request.approved and loan.created atomically
+    // 3. Transactional Outbox: Emit borrow_request.approved atomically
+    // borrow_request.approved carries both requestId and loanId to notify the borrower.
+    // Redundant loan.created event is omitted to prevent duplicate approval notifications.
     const eventIdApproved = `evt_${now}_${Math.random().toString(36).slice(2, 9)}`;
     await ctx.db.insert("automationOutbox", {
       eventId: eventIdApproved,
       eventType: "borrow_request.approved",
-      requestId: request._id,
-      loanId,
-      status: "pending",
-      attempts: 0,
-      nextRetryAt: now,
-      createdAt: now,
-    });
-
-    const eventIdLoan = `evt_${now}_${Math.random().toString(36).slice(2, 9)}_loan`;
-    await ctx.db.insert("automationOutbox", {
-      eventId: eventIdLoan,
-      eventType: "loan.created",
       requestId: request._id,
       loanId,
       status: "pending",

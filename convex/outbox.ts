@@ -20,7 +20,6 @@ export const EVENT_ROUTE_PATHS: Record<string, string> = {
   "request.approved": "lendloop-request-decision",
   "borrow_request.declined": "lendloop-request-decision",
   "request.declined": "lendloop-request-decision",
-  "loan.created": "lendloop-loan-created",
   "loan.returned": "lendloop-loan-returned",
   "loan.overdue": "lendloop-overdue-reminder",
 };

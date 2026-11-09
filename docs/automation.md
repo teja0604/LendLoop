@@ -52,13 +52,13 @@ The outbox processor resolves the destination webhook URL dynamically based on t
 | Event Type | Destination Path | Triggering Domain Operation |
 | :--- | :--- | :--- |
 | `borrow_request.created` | `/webhook/lendloop-request-created` | Neighbor creates a new borrow request |
-| `borrow_request.approved` | `/webhook/lendloop-request-decision` | Tool owner approves request |
+| `borrow_request.approved` | `/webhook/lendloop-request-decision` | Tool owner approves request (activates loan and notifies borrower) |
 | `borrow_request.declined` | `/webhook/lendloop-request-decision` | Tool owner declines request |
-| `loan.created` | `/webhook/lendloop-loan-created` | Handled alongside approval for loan activation tracking |
 | `loan.returned` | `/webhook/lendloop-loan-returned` | Tool marked returned by lender |
 | `loan.overdue` | `/webhook/lendloop-overdue-reminder` | Convex cron scanner identifies overdue active loan |
 
-Unsupported event types are explicitly rejected and marked as terminal failures with descriptive routing errors.
+> [!NOTE]
+> `borrow_request.approved` carries both `requestId` and `loanId`. Redundant dual-emission of `loan.created` is omitted to guarantee borrowers receive exactly one approval notification per approved borrow request. Unsupported event types are explicitly rejected and marked as terminal failures with descriptive routing errors.
 
 ---
 
