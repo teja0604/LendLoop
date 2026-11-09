@@ -439,7 +439,7 @@ async function runRealConvexSecurityTests() {
   }
 
   console.log("\n===================================================================");
-  console.log("All 18 Real Convex Function Security & Regression Tests Passed!");
+  console.log("All 22 Real Convex Function Security & Regression Tests Passed!");
   console.log("===================================================================");
 }
 
